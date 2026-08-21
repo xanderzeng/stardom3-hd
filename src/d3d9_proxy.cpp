@@ -90,6 +90,8 @@ Config LoadConfig() {
         GetPrivateProfileIntW(L"Widescreen", L"GUIRuntimeProbe", 0, ini.c_str()) != 0;
     config.unified_ui_layout =
         GetPrivateProfileIntW(L"Widescreen", L"UnifiedUILayout", 1, ini.c_str()) != 0;
+    config.title_screen_mode = static_cast<int>(std::clamp<UINT>(
+        GetPrivateProfileIntW(L"Widescreen", L"TitleScreenMode", 1, ini.c_str()), 0, 1));
     return config;
 }
 
@@ -217,7 +219,8 @@ public:
             *parameters = patched;
             ResizeClientArea(target_window, config.width, config.height, config.borderless);
             if (config.native_render && config.unified_ui_layout) {
-                InstallUnifiedUILayoutHook(config.width, config.height);
+                InstallUnifiedUILayoutHook(config.width, config.height,
+                                           config.title_screen_mode);
                 PatchMapLocationProjectionBounds(config.width, config.height);
                 PatchAirportLocationLabelFilter();
                 PatchMapLocationVisibilityGuards();
@@ -248,6 +251,7 @@ extern "C" IDirect3D9* WINAPI Direct3DCreate9(UINT sdk_version) {
     if (!stardom::LoadSystemD3D9()) {
         return nullptr;
     }
+    stardom::InstallOpeningVideoHooks();
     IDirect3D9* real = stardom::g_create9(sdk_version);
     if (!real) {
         return nullptr;
@@ -260,6 +264,7 @@ extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version, IDirect3D9Ex** d3d
     if (!d3d || !stardom::LoadSystemD3D9() || !stardom::g_create9_ex) {
         return D3DERR_NOTAVAILABLE;
     }
+    stardom::InstallOpeningVideoHooks();
     // Stardom3 imports Direct3DCreate9, not the Ex interface. This export is
     // forwarded for compatibility with launchers and overlays.
     return stardom::g_create9_ex(sdk_version, d3d);
@@ -270,6 +275,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(instance);
         stardom::g_module_dir = stardom::ModuleDirectory();
         stardom::g_attach_tick = GetTickCount64();
+        stardom::InstallOpeningVideoHooks();
     }
     return TRUE;
 }

@@ -33,6 +33,10 @@ struct DeviceHookState {
     void** original_vtable = nullptr;
     UINT width = 0;
     UINT height = 0;
+    bool title_pillarbox_cleared = false;
+    bool title_pillarbox_logged = false;
+    bool title_ready_before_draw = false;
+    bool title_transition_mask_logged = false;
     UINT active_target_width = 0;
     UINT active_target_height = 0;
     IDirect3DSurface9* main_target_surface = nullptr;
@@ -380,8 +384,11 @@ HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
     UpdateScheduleDateHover(device);
     UpdatePhotoAlbumViewport(device);
     RefreshInGameCGOverlays();
+    RefreshUnifiedUILayout();
     if (device == g_device_hook.device &&
         g_device_hook.original_begin_scene) {
+        g_device_hook.title_pillarbox_cleared = false;
+        g_device_hook.title_ready_before_draw = IsTitleScreenVisible();
         return g_device_hook.original_begin_scene(device);
     }
     return D3DERR_INVALIDCALL;
@@ -847,6 +854,103 @@ bool NearlyEqual(float value, float expected, float tolerance = 1.0f) {
     return std::abs(value - expected) <= tolerance;
 }
 
+struct TitleScreenClipState {
+    bool active = false;
+    DWORD previous_enabled = FALSE;
+    RECT previous_rect{};
+};
+
+TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
+    TitleScreenClipState state;
+    if (!device || !g_device_hook.active_target_is_main ||
+        !IsTitleScreenVisible()) {
+        return state;
+    }
+
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    RECT title_rect{
+        viewport_x,
+        viewport_y,
+        viewport_x + viewport_width,
+        viewport_y + viewport_height,
+    };
+    if (!g_device_hook.title_pillarbox_cleared) {
+        D3DRECT bars[4]{};
+        DWORD bar_count = 0;
+        if (viewport_x > 0) {
+            bars[bar_count++] = D3DRECT{
+                0, 0, viewport_x, static_cast<LONG>(g_device_hook.height)};
+        }
+        if (viewport_x + viewport_width <
+            static_cast<int>(g_device_hook.width)) {
+            bars[bar_count++] = D3DRECT{
+                viewport_x + viewport_width, 0,
+                static_cast<LONG>(g_device_hook.width),
+                static_cast<LONG>(g_device_hook.height)};
+        }
+        if (viewport_y > 0) {
+            bars[bar_count++] = D3DRECT{
+                viewport_x, 0, viewport_x + viewport_width, viewport_y};
+        }
+        if (viewport_y + viewport_height <
+            static_cast<int>(g_device_hook.height)) {
+            bars[bar_count++] = D3DRECT{
+                viewport_x, viewport_y + viewport_height,
+                viewport_x + viewport_width,
+                static_cast<LONG>(g_device_hook.height)};
+        }
+        if (bar_count == 0 || SUCCEEDED(device->Clear(
+                bar_count, bars, D3DCLEAR_TARGET,
+                D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
+            g_device_hook.title_pillarbox_cleared = true;
+            if (!g_device_hook.title_pillarbox_logged) {
+                Log("Title screen pillarbox cleared around %d,%d %dx%d",
+                    viewport_x, viewport_y, viewport_width, viewport_height);
+                g_device_hook.title_pillarbox_logged = true;
+            }
+        }
+    }
+    if (FAILED(device->GetRenderState(
+            D3DRS_SCISSORTESTENABLE, &state.previous_enabled))) {
+        return state;
+    }
+    if (FAILED(device->GetScissorRect(&state.previous_rect))) {
+        state.previous_rect = RECT{
+            0, 0,
+            static_cast<LONG>(g_device_hook.width),
+            static_cast<LONG>(g_device_hook.height),
+        };
+    }
+    if (state.previous_enabled) {
+        title_rect.left = std::max(title_rect.left, state.previous_rect.left);
+        title_rect.top = std::max(title_rect.top, state.previous_rect.top);
+        title_rect.right = std::min(title_rect.right, state.previous_rect.right);
+        title_rect.bottom = std::min(title_rect.bottom, state.previous_rect.bottom);
+    }
+    if (title_rect.right <= title_rect.left ||
+        title_rect.bottom <= title_rect.top ||
+        FAILED(device->SetScissorRect(&title_rect)) ||
+        FAILED(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE))) {
+        return state;
+    }
+    state.active = true;
+    return state;
+}
+
+void EndTitleScreenClip(IDirect3DDevice9* device,
+                        const TitleScreenClipState& state) {
+    if (!device || !state.active) {
+        return;
+    }
+    device->SetScissorRect(&state.previous_rect);
+    device->SetRenderState(D3DRS_SCISSORTESTENABLE, state.previous_enabled);
+}
+
 bool ClearInGameCGPillarboxBeforePrimitive(
     IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     UINT start_vertex, UINT primitive_count) {
@@ -1175,7 +1279,11 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDrawFromStream(device, "DrawPrimitive", type, start_vertex, primitive_count);
         }
-        return g_device_hook.original_draw_primitive(device, type, start_vertex, primitive_count);
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const HRESULT result = g_device_hook.original_draw_primitive(
+            device, type, start_vertex, primitive_count);
+        EndTitleScreenClip(device, title_clip);
+        return result;
     }
     return D3DERR_INVALIDCALL;
 }
@@ -1187,6 +1295,23 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* sour
     UpdateScheduleDateHover(device);
     UpdatePhotoAlbumViewport(device);
     if (device == g_device_hook.device && g_device_hook.original_present) {
+        const bool late_title_frame =
+            g_unified_ui.title_screen_mode != 0 &&
+            !g_device_hook.title_ready_before_draw &&
+            (IsTitleScreenVisible() || IsOpeningTitleTransitionPending());
+        if (late_title_frame) {
+            IDirect3DSurface9* target = nullptr;
+            if (SUCCEEDED(device->GetRenderTarget(0, &target)) && target) {
+                const HRESULT fill_result = device->ColorFill(
+                    target, nullptr, D3DCOLOR_XRGB(0, 0, 0));
+                target->Release();
+                if (SUCCEEDED(fill_result) &&
+                    !g_device_hook.title_transition_mask_logged) {
+                    Log("Masked native title transition frame until aspect-fit layout was ready");
+                    g_device_hook.title_transition_mask_logged = true;
+                }
+            }
+        }
         return g_device_hook.original_present(
             device, source, destination, override_window, dirty_region);
     }
@@ -1203,8 +1328,11 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3D
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawIndexedPrimitive", type, primitive_count, nullptr, num_vertices, 0);
         }
-        return g_device_hook.original_draw_indexed_primitive(
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const HRESULT result = g_device_hook.original_draw_indexed_primitive(
             device, type, base_vertex, min_vertex, num_vertices, start_index, primitive_count);
+        EndTitleScreenClip(device, title_clip);
+        return result;
     }
     return D3DERR_INVALIDCALL;
 }
@@ -1234,7 +1362,11 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
                       PrimitiveVertexCount(type, primitive_count), stride);
         }
-        return g_device_hook.original_draw_primitive_up(device, type, primitive_count, vertices, stride);
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const HRESULT result = g_device_hook.original_draw_primitive_up(
+            device, type, primitive_count, vertices, stride);
+        EndTitleScreenClip(device, title_clip);
+        return result;
     }
     return D3DERR_INVALIDCALL;
 }
@@ -1250,9 +1382,12 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitiveUP(
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawIndexedPrimitiveUP", type, primitive_count, vertices, num_vertices, stride);
         }
-        return g_device_hook.original_draw_indexed_primitive_up(
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const HRESULT result = g_device_hook.original_draw_indexed_primitive_up(
             device, type, min_vertex, num_vertices, primitive_count, indices,
             index_format, vertices, stride);
+        EndTitleScreenClip(device, title_clip);
+        return result;
     }
     return D3DERR_INVALIDCALL;
 }
