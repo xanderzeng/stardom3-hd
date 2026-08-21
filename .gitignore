@@ -1,0 +1,44 @@
+# CMake and IDE build directories
+/build/
+/build-*/
+/.vs/
+/out/
+
+# Debug captures and local investigation artifacts
+/artifacts/
+/schedule-current.bmp
+*.bmp
+*.png
+*.log
+
+# Compiler and linker intermediates
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.map
+*.recipe
+*.tlog
+
+# Generated executables and DLLs; keep the packaged release DLL
+*.exe
+*.dll
+!release/d3d9.dll
+
+# CMake-generated files outside build directories
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Editor, Python, and OS-local files
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db

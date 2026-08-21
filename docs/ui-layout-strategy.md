@@ -1,0 +1,145 @@
+# Stardom3 widescreen UI layout strategy
+
+The game renders its 3D scene natively at 16:9 while most GUI resources still
+assume an 800x600 canvas. Widescreen layout therefore changes **positions by
+anchor** and keeps texture-backed controls at their native size by default.
+
+## Coordinate model
+
+The original canvas centre is `(400, 300)`. For a control with centre
+`(cx, cy)`, proportional position-only mapping is:
+
+```text
+u = (cx - 400) / 400
+v = (cy - 300) / 300
+targetCx = outputWidth  / 2 + u * usableHalfWidth
+targetCy = outputHeight / 2 + v * usableHalfHeight
+```
+
+The control width and height are unchanged. Optional UI-size presets can be
+added separately, without coupling size to screen resolution.
+
+## Anchor families
+
+| Family | Rule | Examples |
+| --- | --- | --- |
+| top-right HUD | preserve top/right margins | `TodayDate` |
+| bottom-right HUD | preserve bottom/right margins | `GameMain`, `GameShort`, all toolbar sublayers |
+| modal | centre on the output | dialogs and confirmation windows |
+| edge panel | preserve distance to the selected edge | left/right information panels |
+| world-following | do not remap | speech bubbles, character markers, floating labels |
+| full-screen | resize or provide a dedicated widescreen background | fades, menus, minigames |
+
+All members of one functional family must share a layout group. Moving only a
+parent form name is insufficient because Stardom3 creates some sublayers as
+independent root forms.
+
+World-following controls use a runtime coordinate-space registry. Known world
+structures (location labels, interaction controls, compact status tags and
+speech bubbles) seed the registry, and the GUI move hook remembers both the
+object and the upstream move source. Later moves from that source bypass legacy
+anchoring even when the projected point happens to be numerically inside the
+old 800x600 canvas. Source matching is a last-resort fallback after all known
+screen-space surfaces, so a shared caller cannot override a schedule panel or
+toolbar's specialized transform. Object identity is retained when auto-sized
+tags change width with their text.
+
+The scene-transition curtain is distinguished from centered legacy pages by
+structure: it is a direct child of the primary root, sits at the origin, is
+approximately 802x602, and has no descendants. This leaf surface is resized to
+the complete output resolution. Legacy pages with child controls keep their
+native 800x600 size and centered placement.
+
+The Star Photo Album is an exception to centered legacy pages. Its table and
+book share one 800x600 viewport with its GUI page and hit rectangles. They are
+scaled together with a single aspect-preserving factor and centered in the
+output. At 1920x1080 the content becomes 1440x1080 at x=240, avoiding the
+2.4x/1.8x anisotropic distortion. The page is recognized by its bottom 800x92
+filmstrip, 355x445 book page, and 92x32 exit button; unrelated menus retain
+native-size centered layout.
+
+The portrait carousel's generic animation controller interpolates between an
+already-scaled source position and a native-coordinate target. Its known
+intermediate call site is therefore remapped by recovering animation progress
+in that mixed space and applying it between consistently scaled endpoints;
+settled layout calls use ordinary absolute scaling. The album viewport remains
+latched across brief root-visibility gaps and is reasserted when returning to
+the main render target and before draws, preventing a legacy 800x600 frame from
+flashing while a character page is rebuilt.
+
+Character selection also cross-fades through a textured 800x600 snapshot quad.
+While the album session is active, that pre-transformed quad is remapped to the
+same aspect-fit rectangle as the live album instead of being mistaken for an
+announcement background and merely centered at native size. Announcement quad
+correction is now gated by the actual announcement-screen signature.
+The snapshot texture is captured from the complete widescreen output and thus
+already contains the live viewport's pillar bars. Its U coordinates are cropped
+to the viewport fraction before expansion, so those embedded bars are not
+scaled into the transition and the snapshot content matches the live width.
+
+The full-screen CG viewer exposes a dedicated visible canvas under the album
+root. Narrative captions are submitted afterward as raw pre-transformed
+800x600 primitives rather than GUI descendants. They retain their authored
+pixel size and are translated as one centered 800x600 overlay canvas instead
+of being scaled with the 1440x1080 CG image. This keeps the panel, borders, and
+glyphs undistorted while preventing left-edge clipping; already-wide
+coordinates are left unchanged.
+
+Story CGs shown during normal gameplay use a different GUI path. The active
+page is recognized as a visible direct-root 800x600 surface containing exactly
+two childless 800x600 image frames. Both frames and their parent are enlarged
+uniformly into the same centered 4:3 viewport (1440x1080 at x=240 on a
+1920x1080 output). Immediately before the textured CG quad is submitted, the
+two uncovered output rectangles are cleared to black so the previous 3D scene
+cannot show through the 4:3 pillarbox area. The narration bar is a separate
+800x76 root with one inset 780x60 text child; it uses the same native 800x600
+overlay translation as the album CG caption. This keeps the image and caption
+aligned without stretching the panel or glyphs and prevents repeated refreshes
+from scaling the bar's already-translated y coordinate. The 800x76 caption is
+also bound directly in the GUI move hook, before the periodic tree refresh, so
+its first visible frame is normally centered. Some story events toggle the
+surface visible by writing its coordinates directly and do not invoke that
+move function. A lightweight CG-overlay refresh therefore runs at `BeginScene`
+and before each draw family, independently of the one-second general tree
+scan. It moves the retained GUI surfaces before their vertices are built and
+does not inspect or alter unrelated pre-transformed effects. The structurally distinct
+800x128 item-acquisition notice (380x60 memo plus 200x140 illustration) uses
+the same native overlay translation; at 1920x1080 its authored `(0,316)`
+position becomes `(560,556)`.
+
+Other story-CG strips use a conservative generic fallback only when they are
+visible direct children of the primary root, are approximately 800 pixels wide
+and 32-180 pixels high, contain child controls, and still begin near the legacy
+canvas x=0 edge. Matching strips are retained and translated every frame in
+the native 800x600 coordinate system. Full-width strips nested inside an
+already-centred 800x600 secondary page are deliberately excluded, preventing
+double offsets and avoiding unrelated world-space effects.
+
+Schedule hover cards may arrive with mixed coordinate spaces: their compact
+surface uses legacy page coordinates, while the detail surface can already
+carry a centered output-space x coordinate. Its horizontal transform is
+therefore idempotent (only legacy x values receive the center offset); vertical
+placement remains relative to the legacy 600-pixel canvas.
+
+## Reference HUD positions
+
+| Output | `TodayDate` | `GameMain` |
+| --- | --- | --- |
+| 1920x1080 | top-right, 24 px margins | bottom-right, 24 px margins |
+| 2560x1440 | top-right, 32 px margins | bottom-right, 32 px margins |
+
+The GUI-resource wrapper moves visual nodes and hit-test nodes together. A D3D9
+guard discards only the two known proxy sizes when they are textureless and use
+the renderer's `0xFFD6D3CE` fallback grey. The textured HUD backgrounds and
+unrelated transparent effects are left untouched.
+
+## Rollout
+
+1. Complete the in-scene HUD family and verify every secondary layer.
+2. Adapt centred dialogs and office screens.
+3. Adapt edge panels and navigation screens.
+4. Treat world-following UI as an explicit exclusion set.
+5. Audit menus and minigames at both 1920x1080 and 2560x1440.
+
+All resource tools preserve raw bytes so Big5 text and original line endings
+are not decoded or rewritten.
