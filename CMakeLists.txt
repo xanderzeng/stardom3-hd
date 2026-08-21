@@ -5,6 +5,7 @@ add_library(d3d9 SHARED
     src/d3d9_proxy.cpp
     src/d3d9_ui_layout.cpp
     src/d3d9_render_hooks.cpp
+    src/d3d9_video.cpp
     src/d3d9_proxy_internal.h
     src/d3d9_proxy.def
 )

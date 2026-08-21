@@ -124,4 +124,6 @@ bool InstallUIDrawHooks(IDirect3DDevice9* device, bool diagnostics,
                         bool suppress_transparent, bool container_probe,
                         bool suppress_proxy_containers, bool gui_runtime_probe);
 
+bool InstallOpeningVideoHooks();
+
 }  // namespace stardom
