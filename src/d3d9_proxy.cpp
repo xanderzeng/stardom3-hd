@@ -242,37 +242,34 @@ private:
     IDirect3D9* real_;
 };
 
+}  // namespace stardom
 
 extern "C" IDirect3D9* WINAPI Direct3DCreate9(UINT sdk_version) {
-    if (!LoadSystemD3D9()) {
+    if (!stardom::LoadSystemD3D9()) {
         return nullptr;
     }
-    IDirect3D9* real = g_create9(sdk_version);
+    IDirect3D9* real = stardom::g_create9(sdk_version);
     if (!real) {
         return nullptr;
     }
-    Log("Direct3DCreate9 intercepted (SDK %u)", sdk_version);
-    return new Direct3D9Proxy(real);
+    stardom::Log("Direct3DCreate9 intercepted (SDK %u)", sdk_version);
+    return new stardom::Direct3D9Proxy(real);
 }
 
 extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version, IDirect3D9Ex** d3d) {
-    if (!d3d || !LoadSystemD3D9() || !g_create9_ex) {
+    if (!d3d || !stardom::LoadSystemD3D9() || !stardom::g_create9_ex) {
         return D3DERR_NOTAVAILABLE;
     }
     // Stardom3 imports Direct3DCreate9, not the Ex interface. This export is
     // forwarded for compatibility with launchers and overlays.
-    return g_create9_ex(sdk_version, d3d);
+    return stardom::g_create9_ex(sdk_version, d3d);
 }
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
+extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
-        g_module_dir = ModuleDirectory();
-        g_attach_tick = GetTickCount64();
+        stardom::g_module_dir = stardom::ModuleDirectory();
+        stardom::g_attach_tick = GetTickCount64();
     }
     return TRUE;
 }
-
-
-
-}  // namespace stardom
