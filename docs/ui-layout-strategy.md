@@ -50,6 +50,36 @@ approximately 802x602, and has no descendants. This leaf surface is resized to
 the complete output resolution. Legacy pages with child controls keep their
 native 800x600 size and centered placement.
 
+The title screen is recognized by its seven 100x100 menu buttons, version
+label, paired 800x600 background layers, and paired animated middle strips.
+It is uniformly enlarged into the same centered 4:3 viewport used by other
+aspect-sensitive full-page scenes. The entire subtree, including button hit
+rectangles, is scaled together; unrelated 800x600 menus retain the ordinary
+centered-page behavior. On a 1920x1080 output the title occupies 1440x1080 at
+x=240. Title rendering is scissored to that viewport because the original
+page contains two 2000-pixel looping animation strips; after uniform scaling
+those strips would otherwise leak character silhouettes and scan lines into
+the side wings. Clipping the complete title pass keeps the animation intact
+inside the authored canvas. The pillarbox rectangles are also cleared to black
+at the start of every title frame so pixels emitted before title detection do
+not survive as stale scan lines in the side wings.
+The detector accepts both mirrored menu arrangements used by the attract
+animation. Cached native child dimensions are also reapplied when a character
+cycle rebuilds or resets individual title layers, so the widescreen layout is
+not limited to whichever animation frame happened to be visible first.
+Title discovery is unthrottled until the root is found, preventing a native
+800x600 frame from appearing before the aspect-fit layout.
+The first frame completed before title discovery is masked at presentation time
+and replaced by the following aspect-fit frame, eliminating the brief native
+800x600 flash. The two animation strips retain the original controller's exact
+native pair state: a render-frame clock reproduces its 30 Hz, two-pixel steps,
+the primary wraps at +/-1000, and the follower is always derived as primary
+/-2000 according to the primary coordinate's sign. The frame clock is necessary
+because the original controller reads the enlarged object coordinate back as
+its next native input. Each paired native coordinate is scaled once and written
+together, preserving direction, strip identity, speed, separation, and hand-off
+order without two independent motion loops.
+
 The Star Photo Album is an exception to centered legacy pages. Its table and
 book share one 800x600 viewport with its GUI page and hit rectangles. They are
 scaled together with a single aspect-preserving factor and centered in the

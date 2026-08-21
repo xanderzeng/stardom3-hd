@@ -90,6 +90,8 @@ Config LoadConfig() {
         GetPrivateProfileIntW(L"Widescreen", L"GUIRuntimeProbe", 0, ini.c_str()) != 0;
     config.unified_ui_layout =
         GetPrivateProfileIntW(L"Widescreen", L"UnifiedUILayout", 1, ini.c_str()) != 0;
+    config.title_screen_mode = static_cast<int>(std::clamp<UINT>(
+        GetPrivateProfileIntW(L"Widescreen", L"TitleScreenMode", 1, ini.c_str()), 0, 1));
     return config;
 }
 
@@ -217,7 +219,8 @@ public:
             *parameters = patched;
             ResizeClientArea(target_window, config.width, config.height, config.borderless);
             if (config.native_render && config.unified_ui_layout) {
-                InstallUnifiedUILayoutHook(config.width, config.height);
+                InstallUnifiedUILayoutHook(config.width, config.height,
+                                           config.title_screen_mode);
                 PatchMapLocationProjectionBounds(config.width, config.height);
                 PatchAirportLocationLabelFilter();
                 PatchMapLocationVisibilityGuards();

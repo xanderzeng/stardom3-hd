@@ -375,6 +375,67 @@ bool IsFullscreenLeafSurface(void* object, void* parent,
     return x >= -2 && x <= 2 && y >= -2 && y <= 2 && !first_child;
 }
 
+bool IsTitleScreenRoot(void* object, void* parent, int width, int height) {
+    // The title page has a stable and unusually specific direct-child
+    // structure: seven square menu buttons, a version label, two complete
+    // background layers, two long animated middle strips, and two 800x310
+    // foreground layers. Match the complete signature so ordinary 800x600
+    // menus can never opt into title-only scaling by accident.
+    if (g_unified_ui.title_screen_mode == 0 ||
+        !CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(object);
+    if (*(bytes + 0x99) == 0) {
+        return false;
+    }
+
+    // The attract animation mirrors the menu between the left and right side
+    // as the featured character changes. Positions therefore cannot be part
+    // of the signature; the seven 100x100 controls and the unusually specific
+    // layer stack are sufficient to identify this page.
+    int menu_buttons = 0;
+    int full_canvas_layers = 0;
+    int animated_strips = 0;
+    int foreground_layers = 0;
+    bool version_label = false;
+    size_t direct_children = 0;
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    while (CanReadGuiObject(child) && direct_children++ < 32) {
+        auto* child_bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(child_bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(child_bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        menu_buttons += child_x >= 15 && child_x <= 685 &&
+            (std::abs(child_y - 35) <= 2 || std::abs(child_y - 135) <= 2) &&
+            child_width >= 98 && child_width <= 102 &&
+            child_height >= 98 && child_height <= 102;
+        version_label |= child_x >= 3 && child_x <= 7 &&
+            child_y >= 3 && child_y <= 7 &&
+            child_width >= 145 && child_width <= 155 &&
+            child_height >= 18 && child_height <= 22;
+        full_canvas_layers += child_x >= -2 && child_x <= 2 &&
+            child_y >= -2 && child_y <= 2 &&
+            child_width >= 798 && child_width <= 802 &&
+            child_height >= 598 && child_height <= 602;
+        animated_strips += child_y >= 181 && child_y <= 185 &&
+            child_width >= 1990 && child_width <= 2010 &&
+            child_height >= 308 && child_height <= 318;
+        foreground_layers += child_x >= -2 && child_x <= 2 &&
+            child_y >= 165 && child_y <= 181 &&
+            child_width >= 798 && child_width <= 802 &&
+            child_height >= 305 && child_height <= 315;
+        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    }
+
+    return menu_buttons == 7 && version_label &&
+        full_canvas_layers == 2 && animated_strips == 2 &&
+        foreground_layers == 2;
+}
+
 bool IsPhotoAlbumRoot(void* object, void* parent, int width, int height) {
     // The Star Photo Album is a full-canvas interactive scene. Its 3D table
     // and book follow the expanded 800x600 viewport, so the GUI page and hit
@@ -711,6 +772,232 @@ void GetPhotoAlbumViewport(UINT output_width, UINT output_height,
     }
     x = (static_cast<int>(output_width) - width) / 2;
     y = (static_cast<int>(output_height) - height) / 2;
+}
+
+bool IsTitleScreenDescendant(void* object) {
+    void* cursor = object;
+    for (int depth = 0; CanReadGuiObject(cursor) && depth < 10; ++depth) {
+        if (cursor == g_unified_ui.title_screen_root) {
+            return true;
+        }
+        cursor = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(cursor) + 0xF0);
+    }
+    return false;
+}
+
+bool IsTitleScreenVisible() {
+    if (g_unified_ui.title_screen_mode == 0 ||
+        !CanReadGuiObject(g_unified_ui.title_screen_root)) {
+        return false;
+    }
+    return *(static_cast<unsigned char*>(g_unified_ui.title_screen_root) +
+        0x99) != 0;
+}
+
+struct TitleNativeGeometry {
+    void* object = nullptr;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+TitleNativeGeometry g_title_native_geometry[1024]{};
+size_t g_title_native_geometry_count = 0;
+void* g_title_native_root = nullptr;
+
+struct TitleStripMotionState {
+    bool pair_valid = false;
+    void* primary_object = nullptr;
+    void* follower_object = nullptr;
+    int primary_native_x = 0;
+    int follower_native_x = 0;
+    int native_step = -2;
+    ULONGLONG last_tick = 0;
+    unsigned int step_accumulator = 0;
+};
+
+TitleStripMotionState g_title_strip_motion;
+
+void ResetTitleNativeGeometry(void* root) {
+    if (g_title_native_root == root) {
+        return;
+    }
+    g_title_native_root = root;
+    g_title_native_geometry_count = 0;
+    g_title_strip_motion = {};
+}
+
+TitleNativeGeometry* FindTitleNativeGeometry(void* object) {
+    for (size_t i = 0; i < g_title_native_geometry_count; ++i) {
+        if (g_title_native_geometry[i].object == object) {
+            return &g_title_native_geometry[i];
+        }
+    }
+    return nullptr;
+}
+
+TitleNativeGeometry* RememberTitleNativeGeometry(void* object) {
+    if (!CanReadGuiObject(object)) {
+        return nullptr;
+    }
+    if (TitleNativeGeometry* existing = FindTitleNativeGeometry(object)) {
+        return existing;
+    }
+    if (g_title_native_geometry_count >= std::size(g_title_native_geometry)) {
+        return nullptr;
+    }
+    auto* bytes = static_cast<unsigned char*>(object);
+    TitleNativeGeometry& geometry =
+        g_title_native_geometry[g_title_native_geometry_count++];
+    geometry.object = object;
+    geometry.x = *reinterpret_cast<int*>(bytes + 0x80);
+    geometry.y = *reinterpret_cast<int*>(bytes + 0x84);
+    geometry.width = *reinterpret_cast<int*>(bytes + 0x88);
+    geometry.height = *reinterpret_cast<int*>(bytes + 0x8C);
+    return &geometry;
+}
+
+bool IsTitleStripGeometry(const TitleNativeGeometry* native) {
+    return native && native->width >= 1990 && native->width <= 2010 &&
+        native->height >= 308 && native->height <= 318;
+}
+
+void RegisterTitleStrip(void* object, const TitleNativeGeometry* native) {
+    if (!object || !IsTitleStripGeometry(native)) {
+        return;
+    }
+    if (native->x < 1000) {
+        if (g_title_strip_motion.primary_object != object) {
+            g_title_strip_motion.primary_object = object;
+            g_title_strip_motion.primary_native_x = native->x;
+        }
+    } else {
+        g_title_strip_motion.follower_object = object;
+    }
+    if (g_title_strip_motion.primary_object &&
+        g_title_strip_motion.follower_object) {
+        g_title_strip_motion.pair_valid = true;
+        g_title_strip_motion.follower_native_x =
+            g_title_strip_motion.primary_native_x < 0 ?
+                g_title_strip_motion.primary_native_x + 2000 :
+                g_title_strip_motion.primary_native_x - 2000;
+    }
+}
+
+void UpdateTitleStripMotion(ULONGLONG now) {
+    if (!g_title_strip_motion.pair_valid || !IsTitleScreenVisible() ||
+        !CanReadGuiObject(g_title_strip_motion.primary_object) ||
+        !CanReadGuiObject(g_title_strip_motion.follower_object) ||
+        !g_unified_ui.trampoline) {
+        g_title_strip_motion.last_tick = now;
+        return;
+    }
+
+    if (g_title_strip_motion.last_tick == 0) {
+        g_title_strip_motion.last_tick = now;
+        return;
+    }
+    // The native controller advances by two pixels at its 30 Hz update rate.
+    // Drive that same state once per elapsed native tick because scaling the
+    // objects makes the controller's position feedback unusable. Clamp long
+    // gaps so restoring a minimized or paused game never jumps the strip.
+    const ULONGLONG elapsed =
+        std::min<ULONGLONG>(now - g_title_strip_motion.last_tick, 100);
+    g_title_strip_motion.last_tick = now;
+    g_title_strip_motion.step_accumulator +=
+        static_cast<unsigned int>(elapsed) * 30;
+    unsigned int steps = g_title_strip_motion.step_accumulator / 1000;
+    g_title_strip_motion.step_accumulator %= 1000;
+    if (steps == 0) {
+        return;
+    }
+
+    while (steps-- > 0) {
+        g_title_strip_motion.primary_native_x +=
+            g_title_strip_motion.native_step;
+        if (g_title_strip_motion.native_step > 0 &&
+            g_title_strip_motion.primary_native_x >= 1000) {
+            g_title_strip_motion.primary_native_x = -1000;
+        } else if (g_title_strip_motion.native_step < 0 &&
+                   g_title_strip_motion.primary_native_x <= -1000) {
+            g_title_strip_motion.primary_native_x = 1000;
+        }
+    }
+    g_title_strip_motion.follower_native_x =
+        g_title_strip_motion.primary_native_x < 0 ?
+            g_title_strip_motion.primary_native_x + 2000 :
+            g_title_strip_motion.primary_native_x - 2000;
+
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    TitleNativeGeometry* primary =
+        FindTitleNativeGeometry(g_title_strip_motion.primary_object);
+    TitleNativeGeometry* follower =
+        FindTitleNativeGeometry(g_title_strip_motion.follower_object);
+    if (!primary || !follower) {
+        return;
+    }
+    original(g_title_strip_motion.primary_object,
+        MulDiv(g_title_strip_motion.primary_native_x, viewport_width, 800),
+        MulDiv(primary->y, viewport_height, 600));
+    original(g_title_strip_motion.follower_object,
+        MulDiv(g_title_strip_motion.follower_native_x, viewport_width, 800),
+        MulDiv(follower->y, viewport_height, 600));
+}
+
+void ScaleTitleScreenSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetTitleNativeGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        const bool newly_discovered = FindTitleNativeGeometry(object) == nullptr;
+        TitleNativeGeometry* native = RememberTitleNativeGeometry(object);
+        RegisterTitleStrip(object, native);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            // Existing objects may currently be between animation keyframes.
+            // Only translate a newly discovered object here; later movement is
+            // handled by HookGuiMove without snapping the animation backward.
+            if (newly_discovered) {
+                original(object,
+                    MulDiv(native->x, viewport_width, 800),
+                    MulDiv(native->y, viewport_height, 600));
+            }
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 512) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleTitleScreenSubtree(child, depth + 1);
+        child = next;
+    }
 }
 
 bool IsPhotoAlbumScreenVisible() {
@@ -1242,6 +1529,33 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     new_x, new_y);
                 g_unified_ui.in_game_cg_item_notice_logged = true;
             }
+        } else if (child == g_unified_ui.title_screen_root &&
+                   IsTitleScreenVisible()) {
+            // The attract animation can restore the root rectangle or replace
+            // individual visual children after the first layout pass. Reapply
+            // the stored native geometry idempotently once per refresh.
+            ScaleTitleScreenSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (IsTitleScreenRoot(child, root, width, height)) {
+            if (g_unified_ui.title_screen_root != child) {
+                ResetTitleNativeGeometry(child);
+            }
+            g_unified_ui.title_screen_root = child;
+            RememberLayoutRoot(child);
+            ScaleTitleScreenSubtree(child);
+            RememberProcessedLayoutObject(child);
+            if (!g_unified_ui.title_screen_logged) {
+                int viewport_x = 0;
+                int viewport_y = 0;
+                int viewport_width = 0;
+                int viewport_height = 0;
+                GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                    viewport_x, viewport_y, viewport_width, viewport_height);
+                Log("Unified UI title screen aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                    child, viewport_x, viewport_y,
+                    viewport_width, viewport_height);
+                g_unified_ui.title_screen_logged = true;
+            }
         } else if (IsPhotoAlbumRoot(child, root, width, height)) {
             g_unified_ui.photo_album_root = child;
             RememberLayoutRoot(child);
@@ -1438,7 +1752,15 @@ void RefreshUnifiedUILayout() {
         return;
     }
     const ULONGLONG now = GetTickCount64();
-    if (now - g_unified_ui.last_refresh_tick < 1000) {
+    UpdateTitleStripMotion(now);
+    // Before the title root is known, scan on the first draw submissions so
+    // the page is aspect-fitted before its first visible frame. Once found,
+    // return to the low-frequency maintenance pass used by ordinary screens.
+    const bool title_discovery_pending =
+        g_unified_ui.title_screen_mode != 0 &&
+        g_unified_ui.title_screen_root == nullptr;
+    if (!title_discovery_pending &&
+        now - g_unified_ui.last_refresh_tick < 1000) {
         return;
     }
     g_unified_ui.last_refresh_tick = now;
@@ -1542,6 +1864,74 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         world_source_return = return_slot[3];
     }
     void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
+    if (self == g_unified_ui.title_screen_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsTitleScreenDescendant(self)) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberTitleNativeGeometry(self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+        }
+        if (IsTitleStripGeometry(native)) {
+            // The original title controller keeps one primary native x and
+            // derives the paired strip from it every update:
+            //   primary += direction * 2, wrapping at +/-1000;
+            //   follower = primary < 0 ? primary + 2000 : primary - 2000.
+            // Reading the transformed object x back into that controller moves
+            // its wrap boundary and breaks the pair. Reproduce the exact native
+            // state machine here, then transform both absolute native outputs
+            // once. The two authored strips therefore retain their identities,
+            // speed, separation, direction changes, and hand-off order.
+            const int input_x = x;
+            const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
+            const bool lead_strip = native->x < 1000;
+            RegisterTitleStrip(self, native);
+            if (lead_strip) {
+                const long long observed_delta =
+                    static_cast<long long>(input_x) - current_x;
+                if (observed_delta >= 1 && observed_delta <= 4) {
+                    g_title_strip_motion.native_step = 2;
+                } else if (observed_delta <= -1 && observed_delta >= -4) {
+                    g_title_strip_motion.native_step = -2;
+                } else if (input_x <= -990 && input_x >= -1010 &&
+                           current_x > 0) {
+                    g_title_strip_motion.native_step = 2;
+                } else if (input_x >= 990 && input_x <= 1010 &&
+                           current_x < 0) {
+                    g_title_strip_motion.native_step = -2;
+                }
+            }
+            const int native_x = lead_strip ?
+                g_title_strip_motion.primary_native_x :
+                g_title_strip_motion.follower_native_x;
+            x = MulDiv(native_x, viewport_width, 800);
+            y = MulDiv(native->y, viewport_height, 600);
+            original(self, x, y);
+            return;
+        }
+        x = MulDiv(x, viewport_width, 800);
+        y = MulDiv(y, viewport_height, 600);
+        original(self, x, y);
+        return;
+    }
     if (parent) {
         auto* parent_bytes = static_cast<unsigned char*>(parent);
         int& parent_width = *reinterpret_cast<int*>(parent_bytes + 0x88);
@@ -1817,7 +2207,7 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     original(self, x, y);
 }
 
-bool InstallUnifiedUILayoutHook(UINT width, UINT height) {
+bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) {
     if (g_unified_ui.installed || width < 800 || height < 600) {
         return g_unified_ui.installed;
     }
@@ -1862,9 +2252,11 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height) {
 
     g_unified_ui.width = width;
     g_unified_ui.height = height;
+    g_unified_ui.title_screen_mode = title_screen_mode;
     g_unified_ui.trampoline = trampoline;
     g_unified_ui.installed = true;
-    Log("Installed unified UI layout hook at %p for %ux%u", target, width, height);
+    Log("Installed unified UI layout hook at %p for %ux%u titleMode=%d",
+        target, width, height, title_screen_mode);
     return true;
 }
 

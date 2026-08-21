@@ -27,11 +27,17 @@ struct OpeningVideoState {
     HWND window = nullptr;
     std::uint32_t source_width = 0;
     std::uint32_t source_height = 0;
+    ULONGLONG closed_tick = 0;
     bool attempted = false;
     bool installed = false;
 };
 
 OpeningVideoState g_opening_video;
+
+bool IsOpeningTitleTransitionPending() {
+    return g_opening_video.closed_tick != 0 &&
+        GetTickCount64() - g_opening_video.closed_tick < 5000;
+}
 
 bool IsOpeningVideoPath(const char* path) {
     if (!path || !*path) {
@@ -105,6 +111,7 @@ void* WINAPI HookBinkOpen(const char* path, std::uint32_t flags) {
     void* bink = g_opening_video.original_open(path, flags);
     if (bink && IsOpeningVideoPath(path)) {
         g_opening_video.bink = bink;
+        g_opening_video.closed_tick = 0;
         Log("Opening video detected: %s handle=%p", path, bink);
     }
     return bink;
@@ -117,6 +124,7 @@ void WINAPI HookBinkClose(void* bink) {
         g_opening_video.bink = nullptr;
         g_opening_video.buffer = nullptr;
         g_opening_video.window = nullptr;
+        g_opening_video.closed_tick = GetTickCount64();
         Log("Opening video closed");
     }
 }

@@ -21,6 +21,7 @@ struct Config {
     bool suppress_proxy_containers = true;
     bool gui_runtime_probe = false;
     bool unified_ui_layout = true;
+    int title_screen_mode = 1;
 };
 
 
@@ -63,6 +64,9 @@ struct UnifiedUILayoutState {
         int target_native_y = 0;
     } photo_album_sequences[16]{};
     int photo_album_animation_direction = 0;
+    int title_screen_mode = 0;
+    void* title_screen_root = nullptr;
+    bool title_screen_logged = false;
     void* in_game_cg_root = nullptr;
     void* in_game_cg_caption = nullptr;
     int in_game_cg_caption_native_y = 342;
@@ -105,7 +109,7 @@ void LogProbeBytes(const unsigned char* address, size_t count);
 bool CanReadGuiObject(const void* object);
 void RefreshUnifiedUILayout();
 void RefreshInGameCGOverlays();
-bool InstallUnifiedUILayoutHook(UINT width, UINT height);
+bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode);
 bool PatchMapLocationProjectionBounds(UINT width, UINT height);
 bool PatchAirportLocationLabelFilter();
 bool PatchMapLocationVisibilityGuards();
@@ -117,6 +121,7 @@ bool IsPhotoAlbumCGVisible();
 bool IsPhotoAlbumScreenVisible();
 bool IsInGameCGVisible();
 bool IsAnnouncementScreenVisible();
+bool IsTitleScreenVisible();
 
 bool InstallUIViewportHook(IDirect3DDevice9* device, UINT width, UINT height,
                            int ui_scale_mode);
@@ -125,5 +130,6 @@ bool InstallUIDrawHooks(IDirect3DDevice9* device, bool diagnostics,
                         bool suppress_proxy_containers, bool gui_runtime_probe);
 
 bool InstallOpeningVideoHooks();
+bool IsOpeningTitleTransitionPending();
 
 }  // namespace stardom
