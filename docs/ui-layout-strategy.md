@@ -41,7 +41,9 @@ object and the upstream move source. Later moves from that source bypass legacy
 anchoring even when the projected point happens to be numerically inside the
 old 800x600 canvas. Source matching is a last-resort fallback after all known
 screen-space surfaces, so a shared caller cannot override a schedule panel or
-toolbar's specialized transform. Object identity is retained when auto-sized
+toolbar's specialized transform. Compact early-game toolbars use their native
+six-item 275px width, while the temporary five-item construction state and the
+later seven-item toolbar use 230px and 320px respectively. Object identity is retained when auto-sized
 tags change width with their text.
 
 The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble

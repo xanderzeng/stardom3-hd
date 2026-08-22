@@ -1987,6 +1987,7 @@ int CountVisibleToolbarSlots(void* object, void* parent,
                              int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
         !((width >= 310 && width <= 330) ||
+          (width >= 270 && width <= 280) ||
           (width >= 225 && width <= 235)) ||
         height < 40 || height > 50) {
         return 0;
@@ -2022,6 +2023,11 @@ bool IsSevenSlotToolbar(void* object, void* parent,
     return CountVisibleToolbarSlots(object, parent, width, height) == 7;
 }
 
+bool IsSixSlotToolbar(void* object, void* parent,
+                      int width, int height) {
+    return CountVisibleToolbarSlots(object, parent, width, height) == 6;
+}
+
 bool IsToolbarAnimationObject(void* parent, int width, int height,
                               int x, int y) {
     (void)x;
@@ -2030,6 +2036,7 @@ bool IsToolbarAnimationObject(void* parent, int width, int height,
         return false;
     }
     const bool toolbar = ((width >= 310 && width <= 330) ||
+                          (width >= 270 && width <= 280) ||
                           (width >= 225 && width <= 235)) &&
         height >= 40 && height <= 50;
     const bool toggle = width >= 25 && width <= 32 &&
@@ -2309,6 +2316,16 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             }
             g_unified_ui.toolbar_width = 320;
             width = 320;
+            original(child,
+                static_cast<int>(g_unified_ui.width) - width,
+                static_cast<int>(g_unified_ui.height) - height);
+            RememberProcessedLayoutObject(child);
+        } else if (IsSixSlotToolbar(child, root, width, height)) {
+            if (g_unified_ui.toolbar_width != 275) {
+                Log("Unified UI toolbar mode=6 width=275");
+            }
+            g_unified_ui.toolbar_width = 275;
+            width = 275;
             original(child,
                 static_cast<int>(g_unified_ui.width) - width,
                 static_cast<int>(g_unified_ui.height) - height);
