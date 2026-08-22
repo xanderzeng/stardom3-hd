@@ -108,6 +108,7 @@ void LogProbeBytes(const unsigned char* address, size_t count);
 
 bool CanReadGuiObject(const void* object);
 void RefreshUnifiedUILayout();
+void RefreshUnifiedUILayoutNow();
 void RefreshInGameCGOverlays();
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode);
 bool PatchMapLocationProjectionBounds(UINT width, UINT height);
@@ -122,6 +123,7 @@ bool IsPhotoAlbumScreenVisible();
 bool IsInGameCGVisible();
 bool IsAnnouncementScreenVisible();
 bool IsTitleScreenVisible();
+bool IsTitleTutorialVisible();
 
 bool InstallUIViewportHook(IDirect3DDevice9* device, UINT width, UINT height,
                            int ui_scale_mode);

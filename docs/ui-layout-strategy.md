@@ -41,8 +41,41 @@ object and the upstream move source. Later moves from that source bypass legacy
 anchoring even when the projected point happens to be numerically inside the
 old 800x600 canvas. Source matching is a last-resort fallback after all known
 screen-space surfaces, so a shared caller cannot override a schedule panel or
-toolbar's specialized transform. Object identity is retained when auto-sized
+toolbar's specialized transform. Compact early-game toolbars use their native
+six-item 275px width, while the temporary five-item construction state and the
+later seven-item toolbar use 230px and 320px respectively. Object identity is retained when auto-sized
 tags change width with their text.
+
+The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble
+structure as projected NPC dialogue, but its native `(320,60)` coordinate is
+relative to an 800x600 tutorial page rather than the 3D viewport. The tutorial
+overlay's unique pair of 400x530 stage layers, central prompt, lower explanation
+layer, and compact top-right control identifies this context. The page and its descendants use
+the same 4:3 aspect-fit transform as the title screen; at 1920x1080 the page
+becomes `(240,0) 1440x1080`, while the detached dialogue bubble becomes
+`(816,108) 297x180`. Child rectangles and hit targets are transformed with
+their owning root. Ordinary NPC bubbles continue to use final world-projection
+pixels unchanged.
+
+Tutorial questions are created later as a separate direct-root 800x600 page,
+not as descendants of the tutorial artwork. Its structural signature is three
+200x90 answer buttons at native x positions 50, 300, and 550 plus one 464x151
+question panel. That complete page receives the tutorial's same aspect-fit
+transform, keeping the outer answers aligned with the three enlarged arrow
+decorations and scaling the labels and hit targets together.
+
+The birthday month/day and blood-type lists are also detached direct-root
+objects. Each list has five 25px rows and two 19x29 scroll arrows, with native
+widths of 70, 60, and 80 pixels respectively. This seven-child signature keeps
+them out of the generic bottom-edge anchoring path: their native coordinates
+receive only the centered 800x600 canvas offset, so a popup created at
+`(268,434)` lands at `(828,674)` on 1920x1080 instead of being pushed down to
+`(828,914)`.
+
+The render clip used by the title screen remains active while the tutorial
+root is visible. Every frame clears the area outside `(240,0) 1440x1080` and
+clips tutorial rendering to that rectangle, preventing the title animation or
+cursor trails from leaking into the pillarboxes.
 
 The scene-transition curtain is distinguished from centered legacy pages by
 structure: it is a direct child of the primary root, sits at the origin, is
@@ -100,8 +133,26 @@ flashing while a character page is rebuilt.
 Character selection also cross-fades through a textured 800x600 snapshot quad.
 While the album session is active, that pre-transformed quad is remapped to the
 same aspect-fit rectangle as the live album instead of being mistaken for an
-announcement background and merely centered at native size. Announcement quad
-correction is now gated by the actual announcement-screen signature.
+announcement background. Announcement correction is gated by the actual
+announcement-screen signature. Its 800x600 control root and result-card subtree
+are mapped to the same aspect-fit viewport, while the renderer separately maps
+the background and any in-canvas 360x200 preview quad. Preview positions are
+left dynamic so the same path covers one through four artists without a slot
+coordinate whitelist. Captions and stat deltas are
+dynamic child controls: each later game-authored move is converted from native
+coordinates instead of freezing the construction position or treating local
+glyph vertices as full-canvas coordinates. The first caption, which the game
+does not move after construction, is placed from the visible result-card count.
+Cached announcement validation intentionally uses the four stable caption and
+result-card sizes rather than their coordinates, because the game rearranges
+all result cards after construction for each artist count.
+Structural validity is also kept separate from visibility: the four-artist
+sequence temporarily hides and restores the already-scaled root. The cached
+root survives that transition, and discovery accepts either its native
+800x600 geometry or its aspect-fit geometry.
+At 1920x1080 the announcement
+occupies 1440x1080 at x=240, while the uncovered side regions continue to show
+the 3D scene.
 The snapshot texture is captured from the complete widescreen output and thus
 already contains the live viewport's pillar bars. Its U coordinates are cropped
 to the viewport fraction before expansion, so those embedded bars are not
@@ -144,6 +195,19 @@ canvas x=0 edge. Matching strips are retained and translated every frame in
 the native 800x600 coordinate system. Full-width strips nested inside an
 already-centred 800x600 secondary page are deliberately excluded, preventing
 double offsets and avoiding unrelated world-space effects.
+
+Publication and award-list panels form a 509/510x350 direct-root family; the
+one-pixel resource variation is intentionally accepted so all of their native
+entrance frames bypass generic lower-right anchoring. Portrait publication
+events use a separate 330x450 direct-root cover made of
+three full-height image layers and one shorter header layer. They follow the
+same rule as the older 510x350 newspaper panel: reflow translates the
+controller's current origin once, then later controller-authored frames pass
+through unchanged. The cached object identity also covers the construction
+window in which the four image layers are not complete yet. This preserves the
+original entrance animation without applying the generic lower-right anchor a
+second time or depending on visibility, which is toggled only after the start
+position has been submitted.
 
 Schedule hover cards may arrive with mixed coordinate spaces: their compact
 surface uses legacy page coordinates, while the detail surface can already
