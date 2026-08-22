@@ -863,7 +863,7 @@ struct TitleScreenClipState {
 TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     TitleScreenClipState state;
     if (!device || !g_device_hook.active_target_is_main ||
-        !IsTitleScreenVisible()) {
+        (!IsTitleScreenVisible() && !IsTitleTutorialVisible())) {
         return state;
     }
 

@@ -44,6 +44,37 @@ screen-space surfaces, so a shared caller cannot override a schedule panel or
 toolbar's specialized transform. Object identity is retained when auto-sized
 tags change width with their text.
 
+The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble
+structure as projected NPC dialogue, but its native `(320,60)` coordinate is
+relative to an 800x600 tutorial page rather than the 3D viewport. The tutorial
+overlay's unique pair of 400x530 stage layers, central prompt, lower explanation
+layer, and compact top-right control identifies this context. The page and its descendants use
+the same 4:3 aspect-fit transform as the title screen; at 1920x1080 the page
+becomes `(240,0) 1440x1080`, while the detached dialogue bubble becomes
+`(816,108) 297x180`. Child rectangles and hit targets are transformed with
+their owning root. Ordinary NPC bubbles continue to use final world-projection
+pixels unchanged.
+
+Tutorial questions are created later as a separate direct-root 800x600 page,
+not as descendants of the tutorial artwork. Its structural signature is three
+200x90 answer buttons at native x positions 50, 300, and 550 plus one 464x151
+question panel. That complete page receives the tutorial's same aspect-fit
+transform, keeping the outer answers aligned with the three enlarged arrow
+decorations and scaling the labels and hit targets together.
+
+The birthday month/day and blood-type lists are also detached direct-root
+objects. Each list has five 25px rows and two 19x29 scroll arrows, with native
+widths of 70, 60, and 80 pixels respectively. This seven-child signature keeps
+them out of the generic bottom-edge anchoring path: their native coordinates
+receive only the centered 800x600 canvas offset, so a popup created at
+`(268,434)` lands at `(828,674)` on 1920x1080 instead of being pushed down to
+`(828,914)`.
+
+The render clip used by the title screen remains active while the tutorial
+root is visible. Every frame clears the area outside `(240,0) 1440x1080` and
+clips tutorial rendering to that rectangle, preventing the title animation or
+cursor trails from leaking into the pillarboxes.
+
 The scene-transition curtain is distinguished from centered legacy pages by
 structure: it is a direct child of the primary root, sits at the origin, is
 approximately 802x602, and has no descendants. This leaf surface is resized to

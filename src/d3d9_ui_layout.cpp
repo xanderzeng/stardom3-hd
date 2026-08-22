@@ -322,6 +322,164 @@ bool IsSmallWorldDialogueBubble(void* object, void* parent,
         second_height >= 35 && second_height <= 85;
 }
 
+bool IsTitleTutorialPage(void* object, void* parent,
+                         int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // The visible new-player tutorial is a separate page above the title
+    // screen. It has two interchangeable 400x530 character/stage layers, a
+    // central prompt, the return/preset control in the top-right corner, and
+    // a full-width lower explanation layer. Matching this actual overlay is
+    // important: the title page underneath has a different 800x600 structure.
+    int stage_layers = 0;
+    bool central_prompt = false;
+    bool compact_control = false;
+    bool lower_explanation = false;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 24) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        stage_layers += child_x >= 198 && child_x <= 202 &&
+            child_y >= -2 && child_y <= 2 &&
+            child_width >= 398 && child_width <= 402 &&
+            child_height >= 528 && child_height <= 532;
+        central_prompt |= child_x >= 333 && child_x <= 337 &&
+            child_y >= 369 && child_y <= 373 &&
+            child_width >= 128 && child_width <= 132 &&
+            child_height >= 53 && child_height <= 57;
+        compact_control |= child_x >= 690 && child_x <= 694 &&
+            child_y >= -1 && child_y <= 3 &&
+            child_width >= 104 && child_width <= 108 &&
+            child_height >= 58 && child_height <= 62;
+        lower_explanation |= child_x >= -2 && child_x <= 2 &&
+            child_y >= 356 && child_y <= 360 &&
+            child_width >= 798 && child_width <= 802 &&
+            child_height >= 240 && child_height <= 244;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited == 5 && stage_layers == 2 && central_prompt &&
+        compact_control && lower_explanation;
+}
+
+extern void* g_title_tutorial_root;
+
+bool HasTitleTutorialPage() {
+    if (CanReadGuiObject(g_title_tutorial_root)) {
+        return true;
+    }
+    if (!CanReadGuiObject(g_unified_ui.primary_root)) {
+        return false;
+    }
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(g_unified_ui.primary_root) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 512) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        if (IsTitleTutorialPage(
+                child, g_unified_ui.primary_root, width, height)) {
+            return true;
+        }
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return false;
+}
+
+bool IsTitleTutorialDialogueBubble(void* object, void* parent,
+                                   int width, int height, int x, int y) {
+    return parent == g_unified_ui.primary_root &&
+        x >= 318 && x <= 322 && y >= 58 && y <= 62 &&
+        IsSmallWorldDialogueBubble(object, parent, width, height) &&
+        HasTitleTutorialPage();
+}
+
+bool IsTitleTutorialProfileDropdown(void* object, void* parent,
+                                    int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 58 || width > 82 || height < 133 || height > 137 ||
+        !HasTitleTutorialPage()) {
+        return false;
+    }
+
+    // Birthday month/day and blood-type selectors share one seven-child
+    // popup structure: five 25px rows and two 19x29 scroll arrows. They are
+    // direct-root overlays positioned in the tutorial's original 800x600
+    // coordinates, so they must follow the centered legacy canvas rather
+    // than the generic bottom-edge anchoring rule.
+    int rows = 0;
+    int arrows = 0;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 8) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        rows += child_x >= 3 && child_x <= 7 &&
+            child_y >= 3 && child_y <= 107 &&
+            child_width >= width - 33 && child_width <= width - 29 &&
+            child_height >= 23 && child_height <= 27;
+        arrows += child_x >= width - 24 && child_x <= width - 20 &&
+            (child_y >= 1 && child_y <= 5 ||
+             child_y >= 101 && child_y <= 105) &&
+            child_width >= 17 && child_width <= 21 &&
+            child_height >= 27 && child_height <= 31;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited == 7 && rows == 5 && arrows == 2;
+}
+
+bool IsTitleTutorialQuestionPage(void* object, void* parent,
+                                 int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602 ||
+        !HasTitleTutorialPage()) {
+        return false;
+    }
+
+    // Tutorial questions are created as a second direct-root 800x600 page,
+    // rather than as children of the already-scaled tutorial artwork. The
+    // page contains three 200x90 answer buttons along its lower edge and one
+    // 464x151 question panel. Match the complete four-child signature so the
+    // answer controls receive the same aspect-fit transform as the artwork.
+    int answer_buttons = 0;
+    bool question_panel = false;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 8) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const bool answer_x =
+            (child_x >= 48 && child_x <= 52) ||
+            (child_x >= 298 && child_x <= 302) ||
+            (child_x >= 548 && child_x <= 552);
+        answer_buttons += answer_x && child_y >= 498 && child_y <= 502 &&
+            child_width >= 198 && child_width <= 202 &&
+            child_height >= 88 && child_height <= 92;
+        question_panel |= child_x >= 168 && child_x <= 172 &&
+            child_y >= 268 && child_y <= 272 &&
+            child_width >= 462 && child_width <= 466 &&
+            child_height >= 149 && child_height <= 153;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited == 4 && answer_buttons == 3 && question_panel;
+}
+
 bool IsEventPublicationPanel(void* object, void* parent,
                              int width, int height) {
     // Newspaper and magazine events use the only 510x350 direct-root panel.
@@ -795,6 +953,14 @@ bool IsTitleScreenVisible() {
         0x99) != 0;
 }
 
+bool IsTitleTutorialVisible() {
+    if (g_unified_ui.title_screen_mode == 0 ||
+        !CanReadGuiObject(g_title_tutorial_root)) {
+        return false;
+    }
+    return *(static_cast<unsigned char*>(g_title_tutorial_root) + 0x99) != 0;
+}
+
 struct TitleNativeGeometry {
     void* object = nullptr;
     int x = 0;
@@ -996,6 +1162,224 @@ void ScaleTitleScreenSubtree(void* object, int depth = 0) {
         void* next = *reinterpret_cast<void**>(
             static_cast<unsigned char*>(child) + 0xF8);
         ScaleTitleScreenSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+TitleNativeGeometry g_title_tutorial_geometry[64]{};
+size_t g_title_tutorial_geometry_count = 0;
+void* g_title_tutorial_root = nullptr;
+TitleNativeGeometry g_title_tutorial_bubble_geometry[16]{};
+size_t g_title_tutorial_bubble_geometry_count = 0;
+void* g_title_tutorial_bubble = nullptr;
+TitleNativeGeometry g_title_tutorial_question_geometry[16]{};
+size_t g_title_tutorial_question_geometry_count = 0;
+void* g_title_tutorial_question_root = nullptr;
+
+TitleNativeGeometry* FindGeometry(TitleNativeGeometry* geometries,
+                                  size_t count, void* object) {
+    for (size_t i = 0; i < count; ++i) {
+        if (geometries[i].object == object) {
+            return &geometries[i];
+        }
+    }
+    return nullptr;
+}
+
+TitleNativeGeometry* RememberGeometry(TitleNativeGeometry* geometries,
+                                      size_t capacity, size_t& count,
+                                      void* object) {
+    if (!CanReadGuiObject(object)) {
+        return nullptr;
+    }
+    if (TitleNativeGeometry* existing = FindGeometry(
+            geometries, count, object)) {
+        return existing;
+    }
+    if (count >= capacity) {
+        return nullptr;
+    }
+    auto* bytes = static_cast<unsigned char*>(object);
+    TitleNativeGeometry& geometry = geometries[count++];
+    geometry.object = object;
+    geometry.x = *reinterpret_cast<int*>(bytes + 0x80);
+    geometry.y = *reinterpret_cast<int*>(bytes + 0x84);
+    geometry.width = *reinterpret_cast<int*>(bytes + 0x88);
+    geometry.height = *reinterpret_cast<int*>(bytes + 0x8C);
+    return &geometry;
+}
+
+void ResetTitleTutorialGeometry(void* root) {
+    if (g_title_tutorial_root == root) {
+        return;
+    }
+    g_title_tutorial_root = root;
+    g_title_tutorial_geometry_count = 0;
+}
+
+bool IsTitleTutorialDescendant(void* object) {
+    void* cursor = object;
+    for (int depth = 0; CanReadGuiObject(cursor) && depth < 10; ++depth) {
+        if (cursor == g_title_tutorial_root) {
+            return true;
+        }
+        cursor = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(cursor) + 0xF0);
+    }
+    return false;
+}
+
+void ScaleTitleTutorialSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetTitleTutorialGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_title_tutorial_geometry,
+            std::size(g_title_tutorial_geometry),
+            g_title_tutorial_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 128) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleTitleTutorialSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetTitleTutorialBubbleGeometry(void* bubble) {
+    if (g_title_tutorial_bubble == bubble) {
+        return;
+    }
+    g_title_tutorial_bubble = bubble;
+    g_title_tutorial_bubble_geometry_count = 0;
+}
+
+void ScaleTitleTutorialBubbleSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 4 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    TitleNativeGeometry* native = RememberGeometry(
+        g_title_tutorial_bubble_geometry,
+        std::size(g_title_tutorial_bubble_geometry),
+        g_title_tutorial_bubble_geometry_count, object);
+    if (native) {
+        width = MulDiv(native->width, viewport_width, 800);
+        height = MulDiv(native->height, viewport_height, 600);
+        const int scaled_x = MulDiv(native->x, viewport_width, 800);
+        const int scaled_y = MulDiv(native->y, viewport_height, 600);
+        original(object,
+            depth == 0 ? viewport_x + scaled_x : scaled_x,
+            depth == 0 ? viewport_y + scaled_y : scaled_y);
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleTitleTutorialBubbleSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetTitleTutorialQuestionGeometry(void* root) {
+    if (g_title_tutorial_question_root == root) {
+        return;
+    }
+    g_title_tutorial_question_root = root;
+    g_title_tutorial_question_geometry_count = 0;
+}
+
+bool IsTitleTutorialQuestionDescendant(void* object) {
+    void* cursor = object;
+    for (int depth = 0; CanReadGuiObject(cursor) && depth < 6; ++depth) {
+        if (cursor == g_title_tutorial_question_root) {
+            return true;
+        }
+        cursor = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(cursor) + 0xF0);
+    }
+    return false;
+}
+
+void ScaleTitleTutorialQuestionSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 4 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetTitleTutorialQuestionGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_title_tutorial_question_geometry,
+            std::size(g_title_tutorial_question_geometry),
+            g_title_tutorial_question_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleTitleTutorialQuestionSubtree(child, depth + 1);
         child = next;
     }
 }
@@ -1227,6 +1611,22 @@ void PlaceCenteredLegacyOverlay(int legacy_x, int legacy_y,
                                 int& x, int& y) {
     x = legacy_x + (static_cast<int>(g_unified_ui.width) - 800) / 2;
     y = legacy_y + (static_cast<int>(g_unified_ui.height) - 600) / 2;
+}
+
+void TransformTitleTutorialProfileDropdown(void* object, int& x, int& y) {
+    if (IsProcessedLayoutObject(object) && CanReadGuiObject(object)) {
+        auto* bytes = static_cast<unsigned char*>(object);
+        const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int current_y = *reinterpret_cast<int*>(bytes + 0x84);
+        if (x == current_x && y == current_y) {
+            return;
+        }
+    }
+    if (x < 0 || x > 800 || y < 0 || y > 600) {
+        return;
+    }
+    x += (static_cast<int>(g_unified_ui.width) - 800) / 2;
+    y += (static_cast<int>(g_unified_ui.height) - 600) / 2;
 }
 
 // The visible announcement control layer is a centered 800x600 root with
@@ -1556,6 +1956,41 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     viewport_width, viewport_height);
                 g_unified_ui.title_screen_logged = true;
             }
+        } else if (child == g_title_tutorial_root) {
+            ScaleTitleTutorialSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (IsTitleTutorialPage(child, root, width, height)) {
+            ResetTitleTutorialGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleTitleTutorialSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI title tutorial aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (child == g_title_tutorial_question_root) {
+            ScaleTitleTutorialQuestionSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (IsTitleTutorialQuestionPage(
+                       child, root, width, height)) {
+            ResetTitleTutorialQuestionGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleTitleTutorialQuestionSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI title tutorial question aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
         } else if (IsPhotoAlbumRoot(child, root, width, height)) {
             g_unified_ui.photo_album_root = child;
             RememberLayoutRoot(child);
@@ -1707,6 +2142,26 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             if (new_x != x || new_y != y) {
                 original(child, new_x, new_y);
             }
+            RememberProcessedLayoutObject(child);
+        } else if (child == g_title_tutorial_bubble ||
+                   IsTitleTutorialDialogueBubble(
+                       child, root, width, height, x, y)) {
+            const bool newly_discovered = child != g_title_tutorial_bubble;
+            const int old_x = x;
+            const int old_y = y;
+            const int old_width = width;
+            const int old_height = height;
+            ResetTitleTutorialBubbleGeometry(child);
+            ScaleTitleTutorialBubbleSubtree(child);
+            if (newly_discovered) {
+                Log("Unified UI title tutorial dialogue self=%p rect=%d,%d %dx%d -> %d,%d %dx%d",
+                    child, old_x, old_y, old_width, old_height,
+                    x, y, width, height);
+            }
+        } else if (IsTitleTutorialProfileDropdown(
+                       child, root, width, height)) {
+            TransformTitleTutorialProfileDropdown(child, x, y);
+            original(child, x, y);
             RememberProcessedLayoutObject(child);
         } else if (!IsProcessedLayoutObject(child) &&
                    IsSmallWorldDialogueBubble(child, root, width, height)) {
@@ -1932,6 +2387,83 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         original(self, x, y);
         return;
     }
+    if (self == g_title_tutorial_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsTitleTutorialDescendant(self)) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_title_tutorial_geometry,
+            std::size(g_title_tutorial_geometry),
+            g_title_tutorial_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_title_tutorial_question_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsTitleTutorialQuestionDescendant(self)) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_title_tutorial_question_geometry,
+            std::size(g_title_tutorial_question_geometry),
+            g_title_tutorial_question_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    const int current_width = *reinterpret_cast<int*>(bytes + 0x88);
+    const int current_height = *reinterpret_cast<int*>(bytes + 0x8C);
+    if (self == g_title_tutorial_bubble ||
+        IsTitleTutorialDialogueBubble(
+            self, parent, current_width, current_height, x, y)) {
+        ResetTitleTutorialBubbleGeometry(self);
+        ScaleTitleTutorialBubbleSubtree(self);
+        return;
+    }
     if (parent) {
         auto* parent_bytes = static_cast<unsigned char*>(parent);
         int& parent_width = *reinterpret_cast<int*>(parent_bytes + 0x88);
@@ -2149,6 +2681,10 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 RememberProcessedLayoutObject(self);
             } else if (IsSmallDialoguePortrait(self, parent, width, height)) {
                 PlaceCenteredLegacyOverlay(95, 403, x, y);
+                RememberProcessedLayoutObject(self);
+            } else if (IsTitleTutorialProfileDropdown(
+                           self, parent, width, height)) {
+                TransformTitleTutorialProfileDropdown(self, x, y);
                 RememberProcessedLayoutObject(self);
             } else if (IsSmallWorldDialogueBubble(self, parent, width, height)) {
                 const int old_x = x;

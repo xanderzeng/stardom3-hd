@@ -122,6 +122,7 @@ bool IsPhotoAlbumScreenVisible();
 bool IsInGameCGVisible();
 bool IsAnnouncementScreenVisible();
 bool IsTitleScreenVisible();
+bool IsTitleTutorialVisible();
 
 bool InstallUIViewportHook(IDirect3DDevice9* device, UINT width, UINT height,
                            int ui_scale_mode);
