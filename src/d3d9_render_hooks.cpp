@@ -425,6 +425,8 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         return D3DERR_INVALIDCALL;
     }
 
+    RefreshUnifiedUILayout();
+
     // Dynamic map billboards render into off-screen surfaces which can have
     // exactly the same dimensions as the back buffer. Comparing dimensions
     // therefore misclassifies those surfaces and expands their legacy
@@ -434,32 +436,32 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
     const bool announcement_preview_size =
         viewport->Width >= 350 && viewport->Width <= 370 &&
         viewport->Height >= 190 && viewport->Height <= 210;
+    // Preview slots are always 360x200, but their positions are computed by
+    // the game from the current artist count.  Accept any such slot contained
+    // by the legacy canvas instead of enumerating the 1/2/3/4-artist layouts.
     const bool announcement_preview_position =
-        (viewport->X >= 20 && viewport->X <= 30 &&
-         viewport->Y >= 15 && viewport->Y <= 25) ||
-        (viewport->X >= 410 && viewport->X <= 420 &&
-         viewport->Y >= 15 && viewport->Y <= 25) ||
-        (viewport->X >= 20 && viewport->X <= 30 &&
-         viewport->Y >= 245 && viewport->Y <= 255) ||
-        (viewport->X >= 410 && viewport->X <= 420 &&
-         viewport->Y >= 245 && viewport->Y <= 255) ||
-        (viewport->X >= 215 && viewport->X <= 225 &&
-         viewport->Y >= 245 && viewport->Y <= 255) ||
-        // The single-artist result screen uses the same 360x200 preview,
-        // but places it one row higher than the multi-artist layouts.
-        (viewport->X >= 215 && viewport->X <= 225 &&
-         viewport->Y >= 135 && viewport->Y <= 145) ||
-        // The two-artist layout uses a diagonal pair of preview slots.
-        (viewport->X >= 65 && viewport->X <= 75 &&
-         viewport->Y >= 15 && viewport->Y <= 25) ||
-        (viewport->X >= 365 && viewport->X <= 375 &&
-         viewport->Y >= 245 && viewport->Y <= 255);
-    if (main_target && announcement_preview_size &&
+        viewport->X <= 800 && viewport->Y <= 600 &&
+        viewport->X + viewport->Width <= 810 &&
+        viewport->Y + viewport->Height <= 610;
+    if (main_target && g_unified_ui.announcement_active &&
+        announcement_preview_size &&
         announcement_preview_position) {
-        D3DVIEWPORT9 shifted = *viewport;
-        shifted.X += (g_device_hook.width - 800) / 2;
-        shifted.Y += (g_device_hook.height - 600) / 2;
-        return g_device_hook.original_set_viewport(device, &shifted);
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        D3DVIEWPORT9 scaled_preview = *viewport;
+        scaled_preview.X = static_cast<DWORD>(viewport_x +
+            MulDiv(static_cast<int>(viewport->X), viewport_width, 800));
+        scaled_preview.Y = static_cast<DWORD>(viewport_y +
+            MulDiv(static_cast<int>(viewport->Y), viewport_height, 600));
+        scaled_preview.Width = static_cast<DWORD>(
+            MulDiv(static_cast<int>(viewport->Width), viewport_width, 800));
+        scaled_preview.Height = static_cast<DWORD>(
+            MulDiv(static_cast<int>(viewport->Height), viewport_height, 600));
+        return g_device_hook.original_set_viewport(device, &scaled_preview);
     }
 
     const bool looks_like_original_ui = viewport->X == 0 && viewport->Y == 0 &&
@@ -473,13 +475,24 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         return g_device_hook.original_set_viewport(device, viewport);
     }
 
+    // Ordinary maintenance is intentionally low-frequency, but announcement
+    // pages must be identified before their first legacy viewport is applied;
+    // otherwise one native 800x600 frame remains visible for up to a second.
+    // Probe only at this viewport transition and rate-limit failed probes so
+    // ordinary pages never pay for a control-tree scan on every draw call.
+    if (!g_unified_ui.announcement_active) {
+        static ULONGLONG last_announcement_probe_tick = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - last_announcement_probe_tick >= 250) {
+            last_announcement_probe_tick = now;
+            if (IsAnnouncementScreenVisible()) {
+                RefreshUnifiedUILayoutNow();
+                Log("Unified UI announcement activated before first viewport");
+            }
+        }
+    }
+
     D3DVIEWPORT9 scaled = *viewport;
-    // Result values and their rise/fall animation are emitted as transformed
-    // sprites after the game selects its legacy 800x600 UI viewport. Expanding
-    // that viewport scales their 200px card spacing to 480px at 1920x1080.
-    // Re-evaluate the structural screen signature synchronously here so even
-    // the first announcement frame uses the centered legacy viewport.
-    g_unified_ui.announcement_active = IsAnnouncementScreenVisible();
     if (IsPhotoAlbumViewportNeeded()) {
         int viewport_x = 0;
         int viewport_y = 0;
@@ -499,10 +512,16 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         }
     } else if (g_unified_ui.announcement_active) {
         g_unified_ui.photo_album_viewport_active = false;
-        scaled.X = (g_device_hook.width - 800) / 2;
-        scaled.Y = (g_device_hook.height - 600) / 2;
-        scaled.Width = 800;
-        scaled.Height = 600;
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        scaled.X = static_cast<DWORD>(viewport_x);
+        scaled.Y = static_cast<DWORD>(viewport_y);
+        scaled.Width = static_cast<DWORD>(viewport_width);
+        scaled.Height = static_cast<DWORD>(viewport_height);
     } else if (g_device_hook.ui_scale_mode == 2) {
         g_unified_ui.photo_album_viewport_active = false;
         scaled.X = 0;
@@ -1051,33 +1070,10 @@ bool IsAnnouncementLegacyQuad(float min_x, float min_y,
     const bool background = NearlyEqual(min_x, 0.0f) &&
         NearlyEqual(min_y, 0.0f) && NearlyEqual(max_x, 800.0f) &&
         NearlyEqual(max_y, 600.0f);
-    const bool preview_left = NearlyEqual(min_x, 25.0f) &&
-        NearlyEqual(min_y, 20.0f) && NearlyEqual(max_x, 385.0f) &&
-        NearlyEqual(max_y, 220.0f);
-    const bool preview_right = NearlyEqual(min_x, 415.0f) &&
-        NearlyEqual(min_y, 20.0f) && NearlyEqual(max_x, 775.0f) &&
-        NearlyEqual(max_y, 220.0f);
-    const bool preview_bottom = NearlyEqual(min_x, 220.0f) &&
-        NearlyEqual(min_y, 250.0f) && NearlyEqual(max_x, 580.0f) &&
-        NearlyEqual(max_y, 450.0f);
-    const bool preview_single = NearlyEqual(min_x, 220.0f) &&
-        NearlyEqual(min_y, 140.0f) && NearlyEqual(max_x, 580.0f) &&
-        NearlyEqual(max_y, 340.0f);
-    const bool preview_pair_top = NearlyEqual(min_x, 70.0f) &&
-        NearlyEqual(min_y, 20.0f) && NearlyEqual(max_x, 430.0f) &&
-        NearlyEqual(max_y, 220.0f);
-    const bool preview_pair_bottom = NearlyEqual(min_x, 370.0f) &&
-        NearlyEqual(min_y, 250.0f) && NearlyEqual(max_x, 730.0f) &&
-        NearlyEqual(max_y, 450.0f);
-    const bool preview_bottom_left = NearlyEqual(min_x, 25.0f) &&
-        NearlyEqual(min_y, 250.0f) && NearlyEqual(max_x, 385.0f) &&
-        NearlyEqual(max_y, 450.0f);
-    const bool preview_bottom_right = NearlyEqual(min_x, 415.0f) &&
-        NearlyEqual(min_y, 250.0f) && NearlyEqual(max_x, 775.0f) &&
-        NearlyEqual(max_y, 450.0f);
-    return background || preview_left || preview_right || preview_bottom ||
-        preview_single || preview_pair_top || preview_pair_bottom ||
-        preview_bottom_left || preview_bottom_right;
+    const bool preview = NearlyEqual(max_x - min_x, 360.0f) &&
+        NearlyEqual(max_y - min_y, 200.0f) && min_x >= -1.0f &&
+        min_y >= -1.0f && max_x <= 801.0f && max_y <= 601.0f;
+    return background || preview;
 }
 
 bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
@@ -1135,18 +1131,16 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
         max_x = std::max(max_x, position[0]);
         max_y = std::max(max_y, position[1]);
     }
-    if (!IsAnnouncementLegacyQuad(min_x, min_y, max_x, max_y)) {
-        buffer->Release();
-        return false;
-    }
-
     const bool full_legacy_canvas = NearlyEqual(min_x, 0.0f) &&
         NearlyEqual(min_y, 0.0f) && NearlyEqual(max_x, 800.0f) &&
         NearlyEqual(max_y, 600.0f);
+    const bool known_announcement_quad = IsAnnouncementLegacyQuad(
+        min_x, min_y, max_x, max_y);
     const bool album_snapshot = full_legacy_canvas &&
         IsPhotoAlbumViewportNeeded();
-    g_unified_ui.announcement_active = IsAnnouncementScreenVisible();
-    if (!album_snapshot && !g_unified_ui.announcement_active) {
+    const bool announcement_quad = g_unified_ui.announcement_active &&
+        known_announcement_quad;
+    if (!album_snapshot && !announcement_quad) {
         buffer->Release();
         return false;
     }
@@ -1220,15 +1214,21 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
         offset_x = static_cast<float>(viewport_x);
         offset_y = static_cast<float>(viewport_y);
     } else {
-        offset_x = static_cast<float>(
-            (static_cast<int>(g_device_hook.width) - 800) / 2);
-        offset_y = static_cast<float>(
-            (static_cast<int>(g_device_hook.height) - 600) / 2);
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        offset_x = static_cast<float>(viewport_x);
+        offset_y = static_cast<float>(viewport_y);
         for (UINT i = 0; i < kVertexCount; ++i) {
             auto* position = reinterpret_cast<float*>(
                 shifted.data() + static_cast<size_t>(i) * stride);
-            position[0] += offset_x;
-            position[1] += offset_y;
+            position[0] = offset_x +
+                position[0] * viewport_width / 800.0f;
+            position[1] = offset_y +
+                position[1] * viewport_height / 600.0f;
         }
     }
 

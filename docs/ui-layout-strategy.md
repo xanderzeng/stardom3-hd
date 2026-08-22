@@ -131,8 +131,26 @@ flashing while a character page is rebuilt.
 Character selection also cross-fades through a textured 800x600 snapshot quad.
 While the album session is active, that pre-transformed quad is remapped to the
 same aspect-fit rectangle as the live album instead of being mistaken for an
-announcement background and merely centered at native size. Announcement quad
-correction is now gated by the actual announcement-screen signature.
+announcement background. Announcement correction is gated by the actual
+announcement-screen signature. Its 800x600 control root and result-card subtree
+are mapped to the same aspect-fit viewport, while the renderer separately maps
+the background and any in-canvas 360x200 preview quad. Preview positions are
+left dynamic so the same path covers one through four artists without a slot
+coordinate whitelist. Captions and stat deltas are
+dynamic child controls: each later game-authored move is converted from native
+coordinates instead of freezing the construction position or treating local
+glyph vertices as full-canvas coordinates. The first caption, which the game
+does not move after construction, is placed from the visible result-card count.
+Cached announcement validation intentionally uses the four stable caption and
+result-card sizes rather than their coordinates, because the game rearranges
+all result cards after construction for each artist count.
+Structural validity is also kept separate from visibility: the four-artist
+sequence temporarily hides and restores the already-scaled root. The cached
+root survives that transition, and discovery accepts either its native
+800x600 geometry or its aspect-fit geometry.
+At 1920x1080 the announcement
+occupies 1440x1080 at x=240, while the uncovered side regions continue to show
+the 3D scene.
 The snapshot texture is captured from the complete widescreen output and thus
 already contains the live viewport's pillar bars. Its U coordinates are cropped
 to the viewport fraction before expansion, so those embedded bars are not
@@ -175,6 +193,19 @@ canvas x=0 edge. Matching strips are retained and translated every frame in
 the native 800x600 coordinate system. Full-width strips nested inside an
 already-centred 800x600 secondary page are deliberately excluded, preventing
 double offsets and avoiding unrelated world-space effects.
+
+Publication and award-list panels form a 509/510x350 direct-root family; the
+one-pixel resource variation is intentionally accepted so all of their native
+entrance frames bypass generic lower-right anchoring. Portrait publication
+events use a separate 330x450 direct-root cover made of
+three full-height image layers and one shorter header layer. They follow the
+same rule as the older 510x350 newspaper panel: reflow translates the
+controller's current origin once, then later controller-authored frames pass
+through unchanged. The cached object identity also covers the construction
+window in which the four image layers are not complete yet. This preserves the
+original entrance animation without applying the generic lower-right anchor a
+second time or depending on visibility, which is toggled only after the start
+position has been submitted.
 
 Schedule hover cards may arrive with mixed coordinate spaces: their compact
 surface uses legacy page coordinates, while the detail surface can already
