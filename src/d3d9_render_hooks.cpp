@@ -1,4 +1,6 @@
 #include "d3d9_proxy_internal.h"
+#include "render_diagnostics.h"
+#include "render_hook_state.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -10,181 +12,6 @@
 #include <vector>
 
 namespace stardom {
-
-using SetViewportFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, const D3DVIEWPORT9*);
-using SetRenderTargetFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, DWORD, IDirect3DSurface9*);
-using BeginSceneFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*);
-using PresentFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
-using DrawPrimitiveFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT);
-using DrawIndexedPrimitiveFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, INT, UINT, UINT, UINT, UINT);
-using DrawPrimitiveUPFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, const void*, UINT);
-using DrawIndexedPrimitiveUPFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT, UINT, const void*, D3DFORMAT, const void*, UINT);
-
-struct DeviceHookState {
-    IDirect3DDevice9* device = nullptr;
-    SetViewportFn original_set_viewport = nullptr;
-    SetRenderTargetFn original_set_render_target = nullptr;
-    BeginSceneFn original_begin_scene = nullptr;
-    PresentFn original_present = nullptr;
-    DrawPrimitiveFn original_draw_primitive = nullptr;
-    DrawIndexedPrimitiveFn original_draw_indexed_primitive = nullptr;
-    DrawPrimitiveUPFn original_draw_primitive_up = nullptr;
-    DrawIndexedPrimitiveUPFn original_draw_indexed_primitive_up = nullptr;
-    void** original_vtable = nullptr;
-    UINT width = 0;
-    UINT height = 0;
-    bool title_pillarbox_cleared = false;
-    bool title_pillarbox_logged = false;
-    bool title_ready_before_draw = false;
-    bool title_transition_mask_logged = false;
-    UINT active_target_width = 0;
-    UINT active_target_height = 0;
-    IDirect3DSurface9* main_target_surface = nullptr;
-    bool active_target_is_main = true;
-    int ui_scale_mode = 0;
-    volatile LONG logged_first_ui_viewport = 0;
-    volatile LONG ui_draw_log_count = 0;
-    volatile LONG suppressed_transparent_draws = 0;
-    volatile LONG probed_container_draws = 0;
-    bool suppress_transparent_ui = false;
-    bool ui_draw_diagnostics = false;
-    bool ui_container_probe = false;
-    bool suppress_proxy_containers = false;
-    bool gui_runtime_probe = false;
-    volatile LONG gui_runtime_probe_done = 0;
-};
-
-bool IsReadableProtection(DWORD protection) {
-    if ((protection & PAGE_GUARD) || protection == PAGE_NOACCESS) {
-        return false;
-    }
-    const DWORD base = protection & 0xFF;
-    return base == PAGE_READONLY || base == PAGE_READWRITE ||
-        base == PAGE_WRITECOPY || base == PAGE_EXECUTE_READ ||
-        base == PAGE_EXECUTE_READWRITE || base == PAGE_EXECUTE_WRITECOPY;
-}
-
-bool IsExecutableProtection(DWORD protection) {
-    if ((protection & PAGE_GUARD) || protection == PAGE_NOACCESS) {
-        return false;
-    }
-    const DWORD base = protection & 0xFF;
-    return base == PAGE_EXECUTE || base == PAGE_EXECUTE_READ ||
-        base == PAGE_EXECUTE_READWRITE || base == PAGE_EXECUTE_WRITECOPY;
-}
-
-void LogProbeBytes(const unsigned char* address, size_t count) {
-    char line[256]{};
-    size_t used = 0;
-    for (size_t i = 0; i < count && used + 4 < sizeof(line); ++i) {
-        const int written = sprintf_s(
-            line + used, sizeof(line) - used, "%02X ", address[i]);
-        if (written <= 0) {
-            break;
-        }
-        used += static_cast<size_t>(written);
-    }
-    Log("GUI xref bytes: %s", line);
-}
-
-std::vector<uintptr_t> FindBytesInModule(HMODULE module, const void* needle,
-                                         size_t needle_size, bool executable_only,
-                                         size_t max_results) {
-    std::vector<uintptr_t> results;
-    if (!module || !needle || needle_size == 0) {
-        return results;
-    }
-    const auto base = reinterpret_cast<uintptr_t>(module);
-    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return results;
-    }
-    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        return results;
-    }
-    const uintptr_t end = base + nt->OptionalHeader.SizeOfImage;
-    uintptr_t cursor = base;
-    while (cursor < end && results.size() < max_results) {
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info))) {
-            break;
-        }
-        const uintptr_t region_start = std::max(cursor, reinterpret_cast<uintptr_t>(info.BaseAddress));
-        const uintptr_t queried_end = reinterpret_cast<uintptr_t>(info.BaseAddress) +
-            static_cast<uintptr_t>(info.RegionSize);
-        const uintptr_t region_end = std::min<uintptr_t>(end, queried_end);
-        const bool usable = info.State == MEM_COMMIT && IsReadableProtection(info.Protect) &&
-            (!executable_only || IsExecutableProtection(info.Protect));
-        if (usable && region_end >= region_start + needle_size) {
-            for (uintptr_t address = region_start;
-                 address + needle_size <= region_end && results.size() < max_results; ++address) {
-                if (std::memcmp(reinterpret_cast<const void*>(address), needle, needle_size) == 0) {
-                    results.push_back(address);
-                }
-            }
-        }
-        if (region_end <= cursor) {
-            break;
-        }
-        cursor = region_end;
-    }
-    return results;
-}
-
-void ProbeGUIStringsInModule(HMODULE module, const char* module_name) {
-    if (!module) {
-        return;
-    }
-    Log("GUI runtime probe module=%s base=%p", module_name, module);
-    const char* targets[] = {"GuiRoot", "TodayDate", "GameMain", "GameShort"};
-    for (const char* target : targets) {
-        const auto strings = FindBytesInModule(
-            module, target, std::strlen(target) + 1, false, 16);
-        Log("GUI probe string=%s matches=%u", target, static_cast<unsigned>(strings.size()));
-        for (uintptr_t string_address : strings) {
-            Log("GUI string %s at=%p", target, reinterpret_cast<void*>(string_address));
-            const uint32_t direct_value = static_cast<uint32_t>(string_address);
-            const auto direct_xrefs = FindBytesInModule(
-                module, &direct_value, sizeof(direct_value), true, 24);
-            for (uintptr_t xref : direct_xrefs) {
-                Log("GUI direct xref %s code=%p", target, reinterpret_cast<void*>(xref));
-                MEMORY_BASIC_INFORMATION info{};
-                if (VirtualQuery(reinterpret_cast<void*>(xref), &info, sizeof(info))) {
-                    const uintptr_t region_start = reinterpret_cast<uintptr_t>(info.BaseAddress);
-                    const uintptr_t region_end = region_start + info.RegionSize;
-                    const uintptr_t dump_start = xref >= region_start + 8 ? xref - 8 : xref;
-                    const size_t dump_size = static_cast<size_t>(std::min<uintptr_t>(32, region_end - dump_start));
-                    LogProbeBytes(reinterpret_cast<const unsigned char*>(dump_start), dump_size);
-                }
-            }
-
-            const auto pointer_slots = FindBytesInModule(
-                module, &direct_value, sizeof(direct_value), false, 32);
-            for (uintptr_t slot : pointer_slots) {
-                if (std::find(direct_xrefs.begin(), direct_xrefs.end(), slot) != direct_xrefs.end()) {
-                    continue;
-                }
-                const uint32_t slot_value = static_cast<uint32_t>(slot);
-                const auto indirect_xrefs = FindBytesInModule(
-                    module, &slot_value, sizeof(slot_value), true, 16);
-                for (uintptr_t xref : indirect_xrefs) {
-                    Log("GUI indirect xref %s slot=%p code=%p", target,
-                        reinterpret_cast<void*>(slot), reinterpret_cast<void*>(xref));
-                }
-            }
-        }
-    }
-}
-
-void RunGUIRuntimeProbe() {
-    Log("GUI runtime probe begin");
-    ProbeGUIStringsInModule(GetModuleHandleW(nullptr), "Stardom3.exe");
-    ProbeGUIStringsInModule(GetModuleHandleW(L"Stardom3.dll"), "Stardom3.dll");
-    Log("GUI runtime probe end");
-}
-
-DeviceHookState g_device_hook;
 
 void UpdatePhotoAlbumViewport(IDirect3DDevice9* device) {
     if (!device || device != g_device_hook.device ||
@@ -573,113 +400,6 @@ bool IsPretransformedUI(IDirect3DDevice9* device, DWORD* fvf_out) {
         *fvf_out = fvf;
     }
     return (fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW;
-}
-
-bool TransformPhotoAlbumCGRawVertices(void* vertices, UINT vertex_count,
-                                      UINT stride) {
-    if (!vertices || vertex_count == 0 || stride < sizeof(float) * 4 ||
-        !IsPhotoAlbumCGVisible()) {
-        return false;
-    }
-
-    auto* bytes = static_cast<unsigned char*>(vertices);
-    float min_x = FLT_MAX;
-    float min_y = FLT_MAX;
-    float max_x = -FLT_MAX;
-    float max_y = -FLT_MAX;
-    for (UINT i = 0; i < vertex_count; ++i) {
-        const auto* position = reinterpret_cast<const float*>(
-            bytes + static_cast<size_t>(i) * stride);
-        min_x = std::min(min_x, position[0]);
-        min_y = std::min(min_y, position[1]);
-        max_x = std::max(max_x, position[0]);
-        max_y = std::max(max_y, position[1]);
-    }
-    // Only late legacy-space overlays need conversion. Album content already
-    // expressed in the 1440x1080 viewport must remain untouched.
-    if (min_x < -2.0f || min_y < -2.0f ||
-        max_x > 802.0f || max_y > 602.0f) {
-        return false;
-    }
-
-    // Keep the caption layer at its authored 800x600 size. It is independent
-    // from the enlarged CG image, so scaling its panel and glyphs makes the
-    // typography look stretched. Center the complete legacy overlay canvas
-    // instead, preserving every relative position and pixel dimension.
-    const int overlay_x =
-        (static_cast<int>(g_device_hook.width) - 800) / 2;
-    const int overlay_y =
-        (static_cast<int>(g_device_hook.height) - 600) / 2;
-    for (UINT i = 0; i < vertex_count; ++i) {
-        auto* position = reinterpret_cast<float*>(
-            bytes + static_cast<size_t>(i) * stride);
-        position[0] += static_cast<float>(overlay_x);
-        position[1] += static_cast<float>(overlay_y);
-    }
-
-    static volatile LONG cg_draw_logs = 0;
-    const LONG log_index = InterlockedIncrement(&cg_draw_logs);
-    if (log_index <= 24) {
-        Log("Photo album CG native overlay #%ld bounds=%.1f,%.1f..%.1f,%.1f offset=%d,%d",
-            log_index, min_x, min_y, max_x, max_y,
-            overlay_x, overlay_y);
-    }
-    return true;
-}
-
-bool DrawPhotoAlbumCGRawPrimitive(IDirect3DDevice9* device,
-                                  D3DPRIMITIVETYPE type,
-                                  UINT start_vertex,
-                                  UINT primitive_count,
-                                  HRESULT& result) {
-    if (!g_device_hook.active_target_is_main ||
-        !g_device_hook.original_draw_primitive_up ||
-        !IsPretransformedUI(device, nullptr) ||
-        !IsPhotoAlbumCGVisible()) {
-        return false;
-    }
-    const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
-    if (vertex_count == 0 || vertex_count > 16384) {
-        return false;
-    }
-
-    IDirect3DVertexBuffer9* buffer = nullptr;
-    UINT stream_offset = 0;
-    UINT stride = 0;
-    if (FAILED(device->GetStreamSource(0, &buffer, &stream_offset, &stride)) ||
-        !buffer || stride < sizeof(float) * 4) {
-        if (buffer) {
-            buffer->Release();
-        }
-        return false;
-    }
-    const size_t byte_offset = static_cast<size_t>(stream_offset) +
-        static_cast<size_t>(start_vertex) * stride;
-    const size_t byte_count = static_cast<size_t>(vertex_count) * stride;
-    D3DVERTEXBUFFER_DESC desc{};
-    void* source = nullptr;
-    if (FAILED(buffer->GetDesc(&desc)) || byte_offset > desc.Size ||
-        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
-        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
-                            static_cast<UINT>(byte_count), &source,
-                            D3DLOCK_READONLY))) {
-        buffer->Release();
-        return false;
-    }
-
-    std::vector<unsigned char> transformed(byte_count);
-    std::memcpy(transformed.data(), source, byte_count);
-    buffer->Unlock();
-    if (!TransformPhotoAlbumCGRawVertices(
-            transformed.data(), vertex_count, stride)) {
-        buffer->Release();
-        return false;
-    }
-    result = g_device_hook.original_draw_primitive_up(
-        device, type, primitive_count, transformed.data(), stride);
-    device->SetStreamSource(0, buffer, stream_offset, stride);
-    buffer->Release();
-    return true;
 }
 
 void LogUIDraw(IDirect3DDevice9* device, const char* method, D3DPRIMITIVETYPE type,
@@ -1268,10 +988,6 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
         ClearInGameCGPillarboxBeforePrimitive(
             device, type, start_vertex, primitive_count);
         HRESULT shifted_result = D3D_OK;
-        if (DrawPhotoAlbumCGRawPrimitive(device, type, start_vertex,
-                                         primitive_count, shifted_result)) {
-            return shifted_result;
-        }
         if (DrawShiftedAnnouncementPrimitive(device, type, start_vertex,
                                              primitive_count, shifted_result)) {
             return shifted_result;
@@ -1344,20 +1060,6 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
     UpdateScheduleDateHover(device);
     UpdatePhotoAlbumViewport(device);
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive_up) {
-        const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
-        if (IsPretransformedUI(device, nullptr) && IsPhotoAlbumCGVisible() &&
-            vertices && vertex_count > 0 && vertex_count <= 16384) {
-            const size_t byte_count =
-                static_cast<size_t>(vertex_count) * stride;
-            std::vector<unsigned char> transformed(byte_count);
-            std::memcpy(transformed.data(), vertices, byte_count);
-            if (TransformPhotoAlbumCGRawVertices(
-                    transformed.data(), vertex_count, stride)) {
-                return g_device_hook.original_draw_primitive_up(
-                    device, type, primitive_count,
-                    transformed.data(), stride);
-            }
-        }
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
                       PrimitiveVertexCount(type, primitive_count), stride);

@@ -68,33 +68,6 @@ void Log(const char* format, ...) {
 }
 
 
-Config LoadConfig() {
-    Config config;
-    const auto ini = IniPath();
-    config.enabled = GetPrivateProfileIntW(L"Widescreen", L"Enabled", 1, ini.c_str()) != 0;
-    config.width = std::clamp<UINT>(GetPrivateProfileIntW(L"Widescreen", L"Width", 1920, ini.c_str()), 800, 7680);
-    config.height = std::clamp<UINT>(GetPrivateProfileIntW(L"Widescreen", L"Height", 1080, ini.c_str()), 600, 4320);
-    config.borderless = GetPrivateProfileIntW(L"Widescreen", L"Borderless", 0, ini.c_str()) != 0;
-    config.native_render = GetPrivateProfileIntW(L"Widescreen", L"NativeRender", 0, ini.c_str()) != 0;
-    config.ui_scale_mode = static_cast<int>(std::clamp<UINT>(
-        GetPrivateProfileIntW(L"Widescreen", L"UIScaleMode", 1, ini.c_str()), 0, 2));
-    config.ui_draw_diagnostics =
-        GetPrivateProfileIntW(L"Widescreen", L"UIDrawDiagnostics", 0, ini.c_str()) != 0;
-    config.suppress_transparent_ui =
-        GetPrivateProfileIntW(L"Widescreen", L"SuppressTransparentUI", 0, ini.c_str()) != 0;
-    config.ui_container_probe =
-        GetPrivateProfileIntW(L"Widescreen", L"UIContainerProbe", 0, ini.c_str()) != 0;
-    config.suppress_proxy_containers =
-        GetPrivateProfileIntW(L"Widescreen", L"SuppressProxyContainers", 0, ini.c_str()) != 0;
-    config.gui_runtime_probe =
-        GetPrivateProfileIntW(L"Widescreen", L"GUIRuntimeProbe", 0, ini.c_str()) != 0;
-    config.unified_ui_layout =
-        GetPrivateProfileIntW(L"Widescreen", L"UnifiedUILayout", 1, ini.c_str()) != 0;
-    config.title_screen_mode = static_cast<int>(std::clamp<UINT>(
-        GetPrivateProfileIntW(L"Widescreen", L"TitleScreenMode", 1, ini.c_str()), 0, 1));
-    return config;
-}
-
 void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
     if (!window || !IsWindow(window)) {
         return;
@@ -183,11 +156,22 @@ public:
             return D3DERR_INVALIDCALL;
         }
 
-        const Config config = LoadConfig();
+        const Config config = LoadConfig(IniPath());
         if (!config.enabled) {
             Log("Patch disabled; forwarding CreateDevice unchanged");
             return real_->CreateDevice(adapter, type, focus_window, flags, parameters, device);
         }
+        if (!config.resolution_valid) {
+            const std::string supported = SupportedResolutionList();
+            Log("Unsupported resolution configuration: Width=%d Height=%d; patch disabled for this CreateDevice. Supported modes: %s",
+                config.configured_width, config.configured_height,
+                supported.c_str());
+            return real_->CreateDevice(adapter, type, focus_window, flags,
+                                       parameters, device);
+        }
+
+        const UINT output_width = static_cast<UINT>(config.resolution.width);
+        const UINT output_height = static_cast<UINT>(config.resolution.height);
 
         D3DPRESENT_PARAMETERS patched = *parameters;
         const UINT original_width = patched.BackBufferWidth;
@@ -195,38 +179,38 @@ public:
         patched.Windowed = TRUE;
         patched.FullScreen_RefreshRateInHz = 0;
         if (config.native_render) {
-            patched.BackBufferWidth = config.width;
-            patched.BackBufferHeight = config.height;
+            patched.BackBufferWidth = output_width;
+            patched.BackBufferHeight = output_height;
         } else {
             // Stardom3 passes 0x0 and lets D3D9 infer 800x600 from the original
             // client area. Once the client is enlarged that would accidentally
             // create a native-size backbuffer, so compatibility mode must pin
             // the game's logical render surface explicitly.
-            patched.BackBufferWidth = 800;
-            patched.BackBufferHeight = 600;
+            patched.BackBufferWidth = LegacyCanvas::width;
+            patched.BackBufferHeight = LegacyCanvas::height;
         }
 
         HWND target_window = patched.hDeviceWindow ? patched.hDeviceWindow : focus_window;
-        ResizeClientArea(target_window, config.width, config.height, config.borderless);
+        ResizeClientArea(target_window, output_width, output_height, config.borderless);
 
         Log("CreateDevice: requested=%ux%u windowed=%d, patched backbuffer=%ux%u client=%ux%u native=%d borderless=%d",
             original_width, original_height, parameters->Windowed,
             patched.BackBufferWidth, patched.BackBufferHeight,
-            config.width, config.height, config.native_render, config.borderless);
+            output_width, output_height, config.native_render, config.borderless);
 
         const HRESULT result = real_->CreateDevice(adapter, type, focus_window, flags, &patched, device);
         if (SUCCEEDED(result)) {
             *parameters = patched;
-            ResizeClientArea(target_window, config.width, config.height, config.borderless);
+            ResizeClientArea(target_window, output_width, output_height, config.borderless);
             if (config.native_render && config.unified_ui_layout) {
-                InstallUnifiedUILayoutHook(config.width, config.height,
+                InstallUnifiedUILayoutHook(output_width, output_height,
                                            config.title_screen_mode);
-                PatchMapLocationProjectionBounds(config.width, config.height);
+                PatchMapLocationProjectionBounds(output_width, output_height);
                 PatchAirportLocationLabelFilter();
                 PatchMapLocationVisibilityGuards();
             }
             if (config.native_render && config.ui_scale_mode != 0 && device && *device) {
-                InstallUIViewportHook(*device, config.width, config.height, config.ui_scale_mode);
+                InstallUIViewportHook(*device, output_width, output_height, config.ui_scale_mode);
             }
             if (config.native_render &&
                 (config.ui_draw_diagnostics || config.suppress_transparent_ui ||

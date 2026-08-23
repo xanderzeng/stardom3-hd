@@ -1,14 +1,33 @@
 cmake_minimum_required(VERSION 3.20)
 project(Stardom3Widescreen LANGUAGES CXX)
 
+enable_testing()
+
 add_library(d3d9 SHARED
     src/d3d9_proxy.cpp
+    src/display_config.cpp
+    src/proxy_config.cpp
+    src/proxy_config.h
+    src/ui_geometry.cpp
     src/d3d9_ui_layout.cpp
+    src/ui_layout_registry.cpp
+    src/ui_layout_registry.h
+    src/ui_page_geometry.cpp
+    src/ui_page_geometry.h
+    src/gui_object.cpp
+    src/gui_object.h
     src/d3d9_render_hooks.cpp
+    src/render_hook_state.cpp
+    src/render_hook_state.h
+    src/render_diagnostics.cpp
+    src/render_diagnostics.h
     src/d3d9_video.cpp
     src/d3d9_proxy_internal.h
+    src/ui_layout_state.h
+    src/ui_layout_state.cpp
     src/d3d9_proxy.def
 )
+target_include_directories(d3d9 PRIVATE src)
 target_compile_features(d3d9 PRIVATE cxx_std_17)
 target_compile_definitions(d3d9 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(d3d9 PRIVATE user32 dxguid)
@@ -27,3 +46,28 @@ target_compile_features(proxy_smoke PRIVATE cxx_std_17)
 target_compile_definitions(proxy_smoke PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(proxy_smoke PRIVATE d3d9 user32)
 set_property(TARGET proxy_smoke PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+add_executable(resolution_geometry_tests
+    tests/resolution_geometry_tests.cpp
+    src/display_config.cpp
+    src/ui_geometry.cpp
+)
+target_compile_features(resolution_geometry_tests PRIVATE cxx_std_17)
+target_include_directories(resolution_geometry_tests PRIVATE src)
+set_property(TARGET resolution_geometry_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+add_test(NAME resolution_geometry COMMAND resolution_geometry_tests)
+add_test(NAME proxy_default
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080)
+add_test(NAME proxy_16_9
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1280 720 1280 720)
+add_test(NAME proxy_4_3
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1024 768 1024 768)
+add_test(NAME proxy_invalid_resolution
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1366 768 -1 -1)
+add_test(NAME proxy_negative_resolution
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> -1920 1080 -1 -1)
+add_test(NAME proxy_partial_resolution
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 - -1 -1)
+add_test(NAME proxy_malformed_resolution
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> invalid 1080 -1 -1)

@@ -1,7 +1,7 @@
 # Stardom3 widescreen UI layout strategy
 
-The game renders its 3D scene natively at 16:9 while most GUI resources still
-assume an 800x600 canvas. Widescreen layout therefore changes **positions by
+The game renders its 3D scene at the selected supported 16:9 or 4:3 output
+mode while most GUI resources still assume an 800x600 canvas. Layout therefore changes **positions by
 anchor** and keeps texture-backed controls at their native size by default.
 
 ## Coordinate model
@@ -215,6 +215,15 @@ carry a centered output-space x coordinate. Its horizontal transform is
 therefore idempotent (only legacy x values receive the center offset); vertical
 placement remains relative to the legacy 600-pixel canvas.
 
+The artist profile is identified by its complete direct-root signature: four
+110x35 tabs, one 549x281 profile card, and the hidden 100x500 side strip. The
+whole 800x600 page is aspect-fitted rather than handled as a native-size
+centred dialog. Geometry is retained for every descendant, so the portrait,
+attribute values, radar grid, filled data polygon, six labels, and hit-test
+controls all use the same 4:3 transform. This avoids the former mixed layout
+where the profile surface remained at 800x600 while the renderer used the
+widescreen viewport for some attribute-chart submissions.
+
 ## Reference HUD positions
 
 | Output | `TodayDate` | `GameMain` |
@@ -233,7 +242,17 @@ unrelated transparent effects are left untouched.
 2. Adapt centred dialogs and office screens.
 3. Adapt edge panels and navigation screens.
 4. Treat world-following UI as an explicit exclusion set.
-5. Audit menus and minigames at both 1920x1080 and 2560x1440.
+5. Audit menus and minigames at representative 16:9 and 4:3 modes.
+
+## Output resolution policy
+
+Display configuration is validated before the window, backbuffer, or hooks are
+changed. The supported 16:9 modes are 1280x720, 1920x1080, 2560x1440, and
+3840x2160; the supported 4:3 modes are 800x600, 1024x768, and 1600x1200. An
+invalid or partially specified pair disables the patch for that CreateDevice
+call and forwards the original D3D9 parameters unchanged. The 800x600 values
+elsewhere in this document describe the authored GUI coordinate system, not a
+fixed output resolution.
 
 All resource tools preserve raw bytes so Big5 text and original line endings
 are not decoded or rewritten.
