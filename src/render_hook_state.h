@@ -37,6 +37,8 @@ struct DeviceHookState {
     UINT height = 0;
     bool title_pillarbox_cleared = false;
     bool title_pillarbox_logged = false;
+    bool training_pillarbox_cleared = false;
+    bool training_pillarbox_logged = false;
     bool title_ready_before_draw = false;
     bool title_transition_mask_logged = false;
     UINT active_target_width = 0;

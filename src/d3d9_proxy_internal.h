@@ -34,6 +34,7 @@ bool IsPhotoAlbumCGVisible();
 bool IsPhotoAlbumScreenVisible();
 bool IsInGameCGVisible();
 bool IsAnnouncementScreenVisible();
+bool IsTrainingScreenPillarboxNeeded();
 bool IsTitleScreenVisible();
 bool IsTitleTutorialVisible();
 

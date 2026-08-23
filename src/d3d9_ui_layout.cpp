@@ -527,6 +527,47 @@ bool IsArtistSigningPage(void* object, void* parent,
     return visited >= 20 && action_buttons == 2 && portrait;
 }
 
+bool IsTrainingMinigamePanel(void* object, void* parent,
+                             int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 424 || width > 428 || height < 367 || height > 371) {
+        return false;
+    }
+
+    // Training activities share a direct-root 426x369 minigame frame. The
+    // generic layout has usually translated its authored (187,126) position
+    // onto the centred 800x600 canvas before discovery, so position is not
+    // part of the signature. Match the timer, full frame and play surface to
+    // exclude unrelated centred panels of a similar size.
+    int timer_panels = 0;
+    bool full_frame = false;
+    bool play_surface = false;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 20) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        timer_panels += child_x >= 53 && child_x <= 57 &&
+            child_y >= 2 && child_y <= 6 &&
+            child_width >= 213 && child_width <= 217 &&
+            child_height >= 30 && child_height <= 34;
+        full_frame |= child_x >= -2 && child_x <= 2 &&
+            child_y >= 32 && child_y <= 36 &&
+            child_width >= 424 && child_width <= 428 &&
+            child_height >= 331 && child_height <= 335;
+        play_surface |= child_x >= 10 && child_x <= 14 &&
+            child_y >= 118 && child_y <= 122 &&
+            child_width >= 398 && child_width <= 402 &&
+            child_height >= 228 && child_height <= 232;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited >= 8 && timer_panels == 1 && full_frame && play_surface;
+}
+
 bool IsEventPublicationPanel(void* object, void* parent,
                              int width, int height) {
     // Publication events and award shortlists use the only 509/510x350
@@ -1411,6 +1452,13 @@ void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
 size_t g_artist_signing_geometry_count = 0;
 void* g_artist_signing_root = nullptr;
+TitleNativeGeometry g_training_minigame_geometry[64]{};
+size_t g_training_minigame_geometry_count = 0;
+void* g_training_minigame_root = nullptr;
+TitleNativeGeometry g_training_activity_geometry[1024]{};
+size_t g_training_activity_geometry_count = 0;
+void* g_training_activity_roots[16]{};
+size_t g_training_activity_root_count = 0;
 
 struct ArtistRadarVertexCache {
     float x[7][4]{};
@@ -1687,6 +1735,212 @@ void ScaleArtistSigningSubtree(void* object, int depth = 0) {
         void* next = *reinterpret_cast<void**>(
             static_cast<unsigned char*>(child) + 0xF8);
         ScaleArtistSigningSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetTrainingMinigameGeometry(void* root) {
+    if (g_training_minigame_root == root) {
+        return;
+    }
+    g_training_minigame_root = root;
+    g_training_minigame_geometry_count = 0;
+    g_training_activity_geometry_count = 0;
+    g_training_activity_root_count = 0;
+}
+
+bool IsTrainingMinigameDescendant(void* object) {
+    return IsDescendantOf(object, g_training_minigame_root);
+}
+
+bool IsTrainingTimerGeometry(const TitleNativeGeometry* native) {
+    if (!native) {
+        return false;
+    }
+    const bool timer_panel = native->x >= 53 && native->x <= 57 &&
+        native->y >= 2 && native->y <= 6 &&
+        native->width >= 213 && native->width <= 217 &&
+        native->height >= 30 && native->height <= 34;
+    const bool progress_bar = native->x >= 5 && native->x <= 9 &&
+        native->y >= 5 && native->y <= 9 &&
+        native->width >= 199 && native->width <= 203 &&
+        native->height >= 13 && native->height <= 17;
+    return timer_panel || progress_bar;
+}
+
+bool IsTrainingActivityRoot(void* object) {
+    for (size_t i = 0; i < g_training_activity_root_count; ++i) {
+        if (g_training_activity_roots[i] == object) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RememberTrainingActivityRoot(void* object) {
+    if (IsTrainingActivityRoot(object)) {
+        return true;
+    }
+    if (g_training_activity_root_count >=
+            std::size(g_training_activity_roots)) {
+        return false;
+    }
+    g_training_activity_roots[g_training_activity_root_count++] = object;
+    return true;
+}
+
+bool IsTrainingActivityDescendant(void* object) {
+    for (size_t i = 0; i < g_training_activity_root_count; ++i) {
+        if (IsDescendantOf(object, g_training_activity_roots[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsTrainingActivityPage(void* object, void* parent,
+                            int width, int height) {
+    if (!CanReadGuiObject(g_training_minigame_root) ||
+        !CanReadGuiObject(object) || parent != g_unified_ui.primary_root) {
+        return false;
+    }
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    const bool native_page = width >= 798 && width <= 802 &&
+        height >= 598 && height <= 602;
+    const bool scaled_page = std::abs(width - viewport_width) <= 2 &&
+        std::abs(height - viewport_height) <= 2;
+    if (!native_page && !scaled_page) {
+        return false;
+    }
+
+    // Every training activity owns a separate 800x600 direct-root page with
+    // one 400x300 playfield at (200,175). The pages coexist in the root list;
+    // the game selects which one to draw for the current training type.
+    size_t playfields = 0;
+    size_t visited = 0;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    while (CanReadGuiObject(child) && visited++ < 8) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        if ((native_page && child_x >= 198 && child_x <= 202 &&
+             child_y >= 173 && child_y <= 177 &&
+             child_width >= 398 && child_width <= 402 &&
+             child_height >= 298 && child_height <= 302) ||
+            (scaled_page &&
+             std::abs(child_x - MulDiv(200, viewport_width, 800)) <= 2 &&
+             std::abs(child_y - MulDiv(175, viewport_height, 600)) <= 2 &&
+             std::abs(child_width - MulDiv(400, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(300, viewport_height, 600)) <= 2)) {
+            ++playfields;
+        }
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return playfields == 1;
+}
+
+void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        // The minigame frame is authored at (187,126). Generic root-child
+        // anchoring may already have added the centred legacy-canvas offset;
+        // use the authored coordinates explicitly instead of scaling that
+        // output-space position a second time.
+        constexpr int kNativeX = 187;
+        constexpr int kNativeY = 126;
+        ResetTrainingMinigameGeometry(object);
+        width = MulDiv(426, viewport_width, 800);
+        height = MulDiv(369, viewport_height, 600);
+        original(object,
+            viewport_x + MulDiv(kNativeX, viewport_width, 800),
+            viewport_y + MulDiv(kNativeY, viewport_height, 600));
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_training_minigame_geometry,
+            std::size(g_training_minigame_geometry),
+            g_training_minigame_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 64) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleTrainingMinigameSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ScaleTrainingActivitySubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        if (!RememberTrainingActivityRoot(object)) {
+            return;
+        }
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_training_activity_geometry,
+            std::size(g_training_activity_geometry),
+            g_training_activity_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 256) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleTrainingActivitySubtree(child, depth + 1);
         child = next;
     }
 }
@@ -2392,6 +2646,17 @@ bool IsAnnouncementScreenVisible() {
     return false;
 }
 
+bool IsTrainingScreenPillarboxNeeded() {
+    if (!g_unified_ui.announcement_active ||
+        !IsCachedAnnouncementRootValid() ||
+        !CanReadGuiObject(g_training_minigame_root)) {
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(g_training_minigame_root);
+    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+        g_unified_ui.primary_root;
+}
+
 bool IsPhoneOverlayRoot(void* object, void* parent,
                         int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -2764,6 +3029,40 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
+        } else if (child == g_training_minigame_root) {
+            // The progress control interpolates its marker internally. Do not
+            // replay Move across the complete subtree during the one-second
+            // maintenance pass: doing so interrupts that interpolation and
+            // can make the marker jump to the midpoint for one frame. Initial
+            // discovery performs the full fit; HookGuiMove maintains later
+            // game-driven updates.
+            RememberProcessedLayoutObject(child);
+        } else if (IsTrainingMinigamePanel(child, root, width, height)) {
+            ResetTrainingMinigameGeometry(child);
+            ScaleTrainingMinigameSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI training minigame aspect-fit self=%p 426x369 -> %d,%d %dx%d",
+                child,
+                viewport_x + MulDiv(187, viewport_width, 800),
+                viewport_y + MulDiv(126, viewport_height, 600),
+                MulDiv(426, viewport_width, 800),
+                MulDiv(369, viewport_height, 600));
+        } else if (IsTrainingActivityRoot(child)) {
+            // Activity pages are fully transformed when first discovered.
+            // Rewalking them here would also restart animations owned by
+            // their custom controls.
+            RememberProcessedLayoutObject(child);
+        } else if (IsTrainingActivityPage(child, root, width, height)) {
+            ScaleTrainingActivitySubtree(child);
+            RememberProcessedLayoutObject(child);
+            Log("Unified UI training activity page aspect-fit self=%p",
+                child);
         } else if (child == g_announcement_root &&
                    IsCachedAnnouncementRootValid()) {
             ScaleAnnouncementSubtree(child);
@@ -3442,6 +3741,98 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self,
                 MulDiv(native->x, viewport_width, 800),
                 MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_training_minigame_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) =
+            MulDiv(426, viewport_width, 800);
+        *reinterpret_cast<int*>(bytes + 0x8C) =
+            MulDiv(369, viewport_height, 600);
+        original(self,
+            viewport_x + MulDiv(187, viewport_width, 800),
+            viewport_y + MulDiv(126, viewport_height, 600));
+        return;
+    }
+    if (parent && IsTrainingMinigameDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_training_minigame_geometry,
+            std::size(g_training_minigame_geometry),
+            g_training_minigame_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            // Training activities move prompts and judgement markers while
+            // they run. Scale the coordinates supplied by this update rather
+            // than replaying the first cached position, while retaining the
+            // cached authored size to avoid cumulative scaling.
+            // The timer's depletion is rendered inside a stationary control.
+            // Some updates echo its already-scaled position; scaling that
+            // value again causes a one-frame jump. Keep only the timer group
+            // on its cached authored anchor while other activity objects use
+            // their live coordinates.
+            const bool fixed_timer = IsTrainingTimerGeometry(native);
+            const int native_x = fixed_timer ? native->x : x;
+            const int native_y = fixed_timer ? native->y : y;
+            original(self,
+                MulDiv(native_x, viewport_width, 800),
+                MulDiv(native_y, viewport_height, 600));
+            return;
+        }
+    }
+    if (IsTrainingActivityRoot(self)) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsTrainingActivityDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_training_activity_geometry,
+            std::size(g_training_activity_geometry),
+            g_training_activity_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(x, viewport_width, 800),
+                MulDiv(y, viewport_height, 600));
             return;
         }
     }

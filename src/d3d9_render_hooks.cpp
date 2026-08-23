@@ -215,6 +215,7 @@ HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
     if (device == g_device_hook.device &&
         g_device_hook.original_begin_scene) {
         g_device_hook.title_pillarbox_cleared = false;
+        g_device_hook.training_pillarbox_cleared = false;
         g_device_hook.title_ready_before_draw = IsTitleScreenVisible();
         return g_device_hook.original_begin_scene(device);
     }
@@ -796,6 +797,41 @@ bool IsAnnouncementLegacyQuad(float min_x, float min_y,
     return background || preview;
 }
 
+void ClearTrainingPillarbox(IDirect3DDevice9* device) {
+    if (!device || g_device_hook.training_pillarbox_cleared ||
+        !g_device_hook.active_target_is_main ||
+        !IsTrainingScreenPillarboxNeeded()) {
+        return;
+    }
+
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (viewport_x <= 0 || viewport_x + viewport_width >=
+            static_cast<int>(g_device_hook.width)) {
+        return;
+    }
+
+    const D3DRECT bars[2] = {
+        {0, 0, viewport_x, static_cast<LONG>(g_device_hook.height)},
+        {viewport_x + viewport_width, 0,
+         static_cast<LONG>(g_device_hook.width),
+         static_cast<LONG>(g_device_hook.height)},
+    };
+    if (SUCCEEDED(device->Clear(
+            2, bars, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
+        g_device_hook.training_pillarbox_cleared = true;
+        if (!g_device_hook.training_pillarbox_logged) {
+            Log("Training screen pillarbox cleared around %d,%d %dx%d",
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            g_device_hook.training_pillarbox_logged = true;
+        }
+    }
+}
+
 bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
                                       D3DPRIMITIVETYPE type,
                                       UINT start_vertex,
@@ -952,6 +988,11 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
         }
     }
 
+    if (announcement_quad && full_legacy_canvas) {
+        // Clear after the office scene has rendered but before the fitted
+        // training background, so only the two regions outside 4:3 turn black.
+        ClearTrainingPillarbox(device);
+    }
     result = g_device_hook.original_draw_primitive_up(
         device, type, primitive_count, shifted.data(), stride);
     // DrawPrimitiveUP clears stream 0 by contract; restore the game's stream

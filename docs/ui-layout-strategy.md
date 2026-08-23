@@ -235,6 +235,20 @@ single 434x410 panel, 100x120 portrait, and paired 98x28 decision buttons. The
 dossier subtree is aspect-fitted with its labels and hit rectangles, while the
 full-height character cut-in remains at its authored size as a separate root.
 
+Training selection already uses the expanded 800x600 page viewport, but each
+activity launches a separate 426x369 minigame frame. The frame is recognized
+by its 215x32 timer, 426x333 full-frame layer, and 400x230 play surface. Its
+authored (187,126) position is recovered from the generic centred-canvas
+translation before the frame, activity layers, labels and hit rectangles are
+aspect-fitted together. The actual activity animation is hosted by a separate
+set of direct-root 800x600 pages, each containing a 400x300 playfield at
+(200,175); those pages are detected only while the frame exists and are fitted
+to the same viewport so the rendered game, animation geometry and frame remain
+aligned. When the training page's fitted 800x600 background is submitted, the
+renderer clears the two regions outside that viewport after the office scene
+and before the training UI, keeping both the activity and result screens on
+black side bars without changing ordinary announcement pages.
+
 ## Reference HUD positions
 
 | Output | `TodayDate` | `GameMain` |
