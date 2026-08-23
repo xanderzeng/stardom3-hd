@@ -56,7 +56,18 @@ target_compile_features(resolution_geometry_tests PRIVATE cxx_std_17)
 target_include_directories(resolution_geometry_tests PRIVATE src)
 set_property(TARGET resolution_geometry_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+add_executable(proxy_config_tests
+    tests/proxy_config_tests.cpp
+    src/display_config.cpp
+    src/proxy_config.cpp
+)
+target_compile_features(proxy_config_tests PRIVATE cxx_std_17)
+target_include_directories(proxy_config_tests PRIVATE src)
+target_compile_definitions(proxy_config_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+set_property(TARGET proxy_config_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_test(NAME resolution_geometry COMMAND resolution_geometry_tests)
+add_test(NAME proxy_config COMMAND proxy_config_tests)
 add_test(NAME proxy_default
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080)
 add_test(NAME proxy_16_9

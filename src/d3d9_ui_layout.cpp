@@ -15,6 +15,7 @@
 namespace stardom {
 
 using GuiMoveFn = void(__thiscall*)(void*, int, int);
+using GuiResizeFn = void(__thiscall*)(void*, int, int);
 using MapLocationUpdateFn = bool(__thiscall*)(void*, void*);
 
 struct MapLocationDiagnosticState {
@@ -148,6 +149,55 @@ bool IsWorldStatusBubble(void* object, void* parent,
     void* next_child = *reinterpret_cast<void**>(child_bytes + 0xF8);
     return !grandchild && !next_child && child_width >= 20 &&
         child_width <= 140 && child_height >= 18 && child_height <= 24;
+}
+
+bool IsTeamFriendshipTag(void* object, void* parent,
+                         int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 64 || width > 68 || height < 17 || height > 21) {
+        return false;
+    }
+
+    // Office/TeamFriendship.txt is a projected 66x19 tag with a 20x18
+    // numeric label and a 15x15 relationship icon. Unlike ordinary compact
+    // status bubbles it has two children, so match the complete resource
+    // signature before bypassing legacy page anchoring. The team controller
+    // already supplies the tag position in the active 3D viewport; treating
+    // (320,411) as a centred legacy control incorrectly moves it to
+    // (560,531) at 1280x720.
+    void* first = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(first)) {
+        return false;
+    }
+    void* second = GuiPointer(first, GuiObjectField::next_sibling);
+    if (!CanReadGuiObject(second) ||
+        GuiPointer(second, GuiObjectField::next_sibling) != nullptr) {
+        return false;
+    }
+    const auto is_label = [](void* child) {
+        return GuiField<int>(child, GuiObjectField::x) >= 43 &&
+            GuiField<int>(child, GuiObjectField::x) <= 47 &&
+            GuiField<int>(child, GuiObjectField::y) >= 0 &&
+            GuiField<int>(child, GuiObjectField::y) <= 2 &&
+            GuiField<int>(child, GuiObjectField::width) >= 18 &&
+            GuiField<int>(child, GuiObjectField::width) <= 22 &&
+            GuiField<int>(child, GuiObjectField::height) >= 16 &&
+            GuiField<int>(child, GuiObjectField::height) <= 20 &&
+            GuiPointer(child, GuiObjectField::first_child) == nullptr;
+    };
+    const auto is_icon = [](void* child) {
+        return GuiField<int>(child, GuiObjectField::x) >= 32 &&
+            GuiField<int>(child, GuiObjectField::x) <= 36 &&
+            GuiField<int>(child, GuiObjectField::y) >= 0 &&
+            GuiField<int>(child, GuiObjectField::y) <= 2 &&
+            GuiField<int>(child, GuiObjectField::width) >= 13 &&
+            GuiField<int>(child, GuiObjectField::width) <= 17 &&
+            GuiField<int>(child, GuiObjectField::height) >= 13 &&
+            GuiField<int>(child, GuiObjectField::height) <= 17 &&
+            GuiPointer(child, GuiObjectField::first_child) == nullptr;
+    };
+    return (is_label(first) && is_icon(second)) ||
+        (is_icon(first) && is_label(second));
 }
 
 bool IsSmallWorldDialogueBubble(void* object, void* parent,
@@ -3103,28 +3153,129 @@ bool IsStudioEventListScreenVisible() {
             g_unified_ui.primary_root && *(bytes + 0x99) != 0;
 }
 
-bool IsPhoneOverlayRoot(void* object, void* parent,
-                        int width, int height) {
+void* g_phone_overlay_root = nullptr;
+void* g_phone_overlay_button = nullptr;
+void* g_toolbar_root = nullptr;
+ULONGLONG g_toolbar_last_slot_refresh_tick = 0;
+GuiResizeFn g_gui_resize = nullptr;
+
+void* FindPhoneOverlayButton(void* object, void* parent,
+                             int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
         width != 0 || height != 0) {
-        return false;
+        return nullptr;
     }
+
+    // MiniGame/BababaCallOut.txt owns a zero-sized root with five direct
+    // children: the talk, countdown, confirmation and question panels plus
+    // the trailing 40x40 phone button. Match the complete resource structure
+    // instead of the button's current position. The event controller parks
+    // the button at (-40,-40) while idle, so the old y=558 signature stopped
+    // recognizing the overlay after its first lifecycle transition.
+    bool talk = false;
+    bool countdown = false;
+    bool confirmation = false;
+    bool question = false;
+    void* phone_button = nullptr;
     void* child = *reinterpret_cast<void**>(
         static_cast<unsigned char*>(object) + 0xF4);
     size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 16) {
+    while (CanReadGuiObject(child) && visited++ < 6) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int y = *reinterpret_cast<int*>(bytes + 0x84);
         const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
         const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
-        if (x >= 0 && x <= 8 && y >= 550 && y <= 565 &&
-            child_width == 40 && child_height == 40) {
-            return true;
+        void* next = *reinterpret_cast<void**>(bytes + 0xF8);
+        talk |= child_width == 605 && child_height == 178;
+        confirmation |= child_width == 338 && child_height == 143;
+        question |= child_width == 480 && child_height == 380;
+        if (child_width == 40 && child_height == 40) {
+            if (next == nullptr) {
+                phone_button = child;
+            } else {
+                countdown = true;
+            }
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = next;
     }
-    return false;
+    return child == nullptr && visited == 5 && talk && countdown &&
+        confirmation && question ? phone_button : nullptr;
+}
+
+void RememberPhoneOverlay(void* root, void* button) {
+    if (g_phone_overlay_root == root && g_phone_overlay_button == button) {
+        return;
+    }
+    g_phone_overlay_root = root;
+    g_phone_overlay_button = button;
+}
+
+bool IsPhoneOverlayRinging() {
+    if (!CanReadGuiObject(g_phone_overlay_root) ||
+        !CanReadGuiObject(g_phone_overlay_button)) {
+        return false;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
+    if (*reinterpret_cast<void**>(root_bytes + 0xF0) !=
+            g_unified_ui.primary_root ||
+        *reinterpret_cast<void**>(button_bytes + 0xF0) !=
+            g_phone_overlay_root ||
+        *(button_bytes + 0x99) == 0) {
+        return false;
+    }
+
+    // BababaCallOut's PlaneBase is a zero-sized structural container. The
+    // game keeps its own visibility byte cleared even while a visible child
+    // (including BtnPhone) is rendered, so it cannot be used as the event's
+    // visibility gate. BtnPhone and the four sibling panels carry the actual
+    // phase state.
+
+    // The ringing phase exposes only BtnPhone. Once the player answers, one
+    // of the dialogue/question panels becomes visible and the controller is
+    // intentionally allowed to park the button off-screen again.
+    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 6) {
+        auto* child_bytes = static_cast<unsigned char*>(child);
+        if (child != g_phone_overlay_button && *(child_bytes + 0x99) != 0) {
+            return false;
+        }
+        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    }
+    return child == nullptr;
+}
+
+void GetPhoneOverlayButtonPosition(int& x, int& y) {
+    x = 3;
+    y = 558;
+    TransformRootChildPosition(40, 40, x, y);
+}
+
+void RefreshPhoneOverlayButton() {
+    if (!g_unified_ui.trampoline || !IsPhoneOverlayRinging()) {
+        return;
+    }
+
+    auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
+    const int x = *reinterpret_cast<int*>(button_bytes + 0x80);
+    const int y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    const int width = *reinterpret_cast<int*>(button_bytes + 0x88);
+    const int height = *reinterpret_cast<int*>(button_bytes + 0x8C);
+    const bool off_screen = x + width <= 0 || y + height <= 0 ||
+        x >= static_cast<int>(g_unified_ui.width) ||
+        y >= static_cast<int>(g_unified_ui.height);
+    const bool authored_position = x >= 0 && x <= 8 &&
+        y >= 550 && y <= 565;
+    if (!off_screen && !authored_position) {
+        return;
+    }
+
+    int target_x = 0;
+    int target_y = 0;
+    GetPhoneOverlayButtonPosition(target_x, target_y);
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    original(g_phone_overlay_button, target_x, target_y);
+    RememberProcessedLayoutObject(g_phone_overlay_button);
 }
 
 int CountVisibleToolbarSlots(void* object, void* parent,
@@ -3155,6 +3306,142 @@ int CountVisibleToolbarSlots(void* object, void* parent,
         child = *reinterpret_cast<void**>(bytes + 0xF8);
     }
     return visible_count;
+}
+
+void NormalizeVisibleToolbarSlots(void* object, int expected_slots) {
+    if (!CanReadGuiObject(object) || !g_unified_ui.trampoline ||
+        expected_slots < 5 || expected_slots > 7) {
+        return;
+    }
+
+    struct VisibleToolbarSlot {
+        void* object = nullptr;
+        int x = 0;
+        int y = 0;
+    } slots[7]{};
+    size_t slot_count = 0;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const bool visible = *(bytes + 0x99) != 0;
+        if (visible && x >= 0 && x <= 320 && y >= 0 && y <= 10 &&
+            width >= 35 && width <= 42 &&
+            height >= 35 && height <= 42 && slot_count < std::size(slots)) {
+            slots[slot_count++] = {child, x, y};
+        }
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    if (slot_count != static_cast<size_t>(expected_slots)) {
+        return;
+    }
+
+    std::sort(std::begin(slots), std::begin(slots) + slot_count,
+        [](const VisibleToolbarSlot& left,
+           const VisibleToolbarSlot& right) {
+            if (left.x != right.x) {
+                return left.x < right.x;
+            }
+            return reinterpret_cast<uintptr_t>(left.object) <
+                reinterpret_cast<uintptr_t>(right.object);
+        });
+    constexpr int kToolbarSlotX[7] = {5, 51, 96, 141, 186, 231, 276};
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    for (size_t i = 0; i < slot_count; ++i) {
+        if (slots[i].x != kToolbarSlotX[i]) {
+            original(slots[i].object, kToolbarSlotX[i], slots[i].y);
+        }
+    }
+}
+
+void RememberToolbarRoot(void* object) {
+    if (g_toolbar_root != object) {
+        g_toolbar_root = object;
+        g_toolbar_last_slot_refresh_tick = 0;
+    }
+}
+
+void ResizeToolbarBackground(void* object, int width, int height) {
+    if (!CanReadGuiObject(object)) {
+        return;
+    }
+    auto* bytes = static_cast<unsigned char*>(object);
+    const int current_width = *reinterpret_cast<int*>(bytes + 0x88);
+    const int current_height = *reinterpret_cast<int*>(bytes + 0x8C);
+    if (current_width == width && current_height == height) {
+        return;
+    }
+    if (g_gui_resize) {
+        // Stardom3's native SetSize updates the fields and invokes the Plane
+        // geometry rebuild virtual. Directly writing width changes hit tests
+        // but leaves the seven-slot background mesh unchanged.
+        g_gui_resize(object, width, height);
+    } else {
+        *reinterpret_cast<int*>(bytes + 0x88) = width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = height;
+    }
+}
+
+void RefreshToolbarSlots(ULONGLONG now) {
+    // RefreshUnifiedUILayout is reached from several draw hooks. Limit this
+    // retained seven-child check to roughly once per rendered frame.
+    constexpr ULONGLONG kToolbarSlotRefreshIntervalMs = 8;
+    if (now - g_toolbar_last_slot_refresh_tick <
+            kToolbarSlotRefreshIntervalMs ||
+        !CanReadGuiObject(g_toolbar_root)) {
+        return;
+    }
+    g_toolbar_last_slot_refresh_tick = now;
+
+    auto* bytes = static_cast<unsigned char*>(g_toolbar_root);
+    void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
+    const int width = *reinterpret_cast<int*>(bytes + 0x88);
+    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+    if (parent != g_unified_ui.primary_root || height < 40 || height > 50) {
+        g_toolbar_root = nullptr;
+        return;
+    }
+    const int visible_slots = CountVisibleToolbarSlots(
+        g_toolbar_root, parent, width, height);
+    if (visible_slots >= 5 && visible_slots <= 7) {
+        constexpr int kToolbarWidths[3] = {230, 275, 320};
+        const int toolbar_width = kToolbarWidths[visible_slots - 5];
+        g_unified_ui.toolbar_width = toolbar_width;
+        ResizeToolbarBackground(g_toolbar_root, toolbar_width, height);
+        NormalizeVisibleToolbarSlots(g_toolbar_root, visible_slots);
+    }
+}
+
+bool GetToolbarBackgroundRenderRect(RECT& rect,
+                                    float& texture_width_ratio) {
+    if (!CanReadGuiObject(g_toolbar_root) ||
+        g_unified_ui.toolbar_width < 225 ||
+        g_unified_ui.toolbar_width >= 310) {
+        return false;
+    }
+
+    auto* bytes = static_cast<unsigned char*>(g_toolbar_root);
+    const int x = *reinterpret_cast<int*>(bytes + 0x80);
+    const int y = *reinterpret_cast<int*>(bytes + 0x84);
+    const int width = *reinterpret_cast<int*>(bytes + 0x88);
+    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+    if (*reinterpret_cast<void**>(bytes + 0xF0) !=
+            g_unified_ui.primary_root ||
+        *(bytes + 0x99) == 0 || width != g_unified_ui.toolbar_width ||
+        height < 40 || height > 50 ||
+        x != static_cast<int>(g_unified_ui.width) - width ||
+        y != static_cast<int>(g_unified_ui.height) - height) {
+        return false;
+    }
+
+    rect = RECT{x, y, x + width, y + height};
+    texture_width_ratio = static_cast<float>(width) / 320.0f;
+    return true;
 }
 
 bool IsFiveSlotToolbar(void* object, void* parent,
@@ -3600,37 +3887,45 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             Log("Unified UI fullscreen leaf self=%p rect=0,0 %dx%d -> %ux%u",
                 child, old_width, old_height,
                 g_unified_ui.width, g_unified_ui.height);
-        } else if (IsPhoneOverlayRoot(child, root, width, height)) {
+        } else if (void* phone_button = FindPhoneOverlayButton(
+                       child, root, width, height)) {
+            RememberPhoneOverlay(child, phone_button);
             RememberLayoutRoot(child);
             ReflowExistingRootChildren(child, depth + 1);
         } else if (IsSevenSlotToolbar(child, root, width, height)) {
             if (g_unified_ui.toolbar_width != 320) {
                 Log("Unified UI toolbar mode=7 width=320");
             }
+            RememberToolbarRoot(child);
             g_unified_ui.toolbar_width = 320;
-            width = 320;
+            NormalizeVisibleToolbarSlots(child, 7);
+            ResizeToolbarBackground(child, 320, height);
             original(child,
-                static_cast<int>(g_unified_ui.width) - width,
+                static_cast<int>(g_unified_ui.width) - 320,
                 static_cast<int>(g_unified_ui.height) - height);
             RememberProcessedLayoutObject(child);
         } else if (IsSixSlotToolbar(child, root, width, height)) {
             if (g_unified_ui.toolbar_width != 275) {
                 Log("Unified UI toolbar mode=6 width=275");
             }
+            RememberToolbarRoot(child);
             g_unified_ui.toolbar_width = 275;
-            width = 275;
+            NormalizeVisibleToolbarSlots(child, 6);
+            ResizeToolbarBackground(child, 275, height);
             original(child,
-                static_cast<int>(g_unified_ui.width) - width,
+                static_cast<int>(g_unified_ui.width) - 275,
                 static_cast<int>(g_unified_ui.height) - height);
             RememberProcessedLayoutObject(child);
         } else if (IsFiveSlotToolbar(child, root, width, height)) {
             if (g_unified_ui.toolbar_width != 230) {
                 Log("Unified UI toolbar mode=5 width=230");
             }
+            RememberToolbarRoot(child);
             g_unified_ui.toolbar_width = 230;
-            width = 230;
+            NormalizeVisibleToolbarSlots(child, 5);
+            ResizeToolbarBackground(child, 230, height);
             original(child,
-                static_cast<int>(g_unified_ui.width) - width,
+                static_cast<int>(g_unified_ui.width) - 230,
                 static_cast<int>(g_unified_ui.height) - height);
             RememberProcessedLayoutObject(child);
         } else if (IsToolbarAnimationObject(root, width, height, x, y)) {
@@ -3698,6 +3993,7 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                    IsRadialInteractionWheel(child, root, width, height) ||
                    IsMapLocationLabel(child, root, width, height) ||
                    IsWorldStatusBubble(child, root, width, height) ||
+                   IsTeamFriendshipTag(child, root, width, height) ||
                    IsWorldDialogueChoicePanel(child, root, width, height) ||
                    IsWorldProjectedObject(child)) {
             // Preserve the game's own projected coordinates.  In particular,
@@ -3858,6 +4154,8 @@ void RefreshUnifiedUILayout() {
         return;
     }
     const ULONGLONG now = GetTickCount64();
+    RefreshToolbarSlots(now);
+    RefreshPhoneOverlayButton();
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
     // Before the title root is known, scan on the first draw submissions so
@@ -4008,6 +4306,21 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         world_source_return = return_slot[3];
     }
     void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
+    if (self == g_phone_overlay_button &&
+        parent == g_phone_overlay_root && IsPhoneOverlayRinging()) {
+        const int width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const bool off_screen = x + width <= 0 || y + height <= 0 ||
+            x >= static_cast<int>(g_unified_ui.width) ||
+            y >= static_cast<int>(g_unified_ui.height);
+        const bool authored_position = x >= 0 && x <= 8 &&
+            y >= 550 && y <= 565;
+        if (off_screen || authored_position) {
+            GetPhoneOverlayButtonPosition(x, y);
+        }
+        original(self, x, y);
+        return;
+    }
     if (self == g_unified_ui.title_screen_root) {
         int viewport_x = 0;
         int viewport_y = 0;
@@ -4514,8 +4827,14 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             parent_height = static_cast<int>(g_unified_ui.height);
             ReflowExistingRootChildren(parent);
         } else if (legacy_root && grandparent &&
+                   !IsProcessedLayoutObject(parent) &&
                    (grandparent == g_unified_ui.primary_root ||
                     IsKnownLayoutRoot(grandparent))) {
+            // A completed centered 800x600 page keeps its authored size.
+            // Dialogue controllers move several children when advancing to
+            // the next line; rescanning the full primary tree for every one
+            // of those moves stalls the render thread. Only use this path to
+            // discover a legacy container during its first construction.
             ReflowExistingRootChildren(grandparent);
         }
 
@@ -4628,20 +4947,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             int viewport_height = 0;
             GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
                 viewport_x, viewport_y, viewport_width, viewport_height);
-            const int incoming_x = x;
-            const int incoming_y = y;
-            const bool carousel_frame = TransformPhotoAlbumCarouselFrame(
+            TransformPhotoAlbumCarouselFrame(
                 self, immediate_call, current_x, current_y,
                 viewport_width, viewport_height, x, y);
-            const LONG album_move_count = InterlockedIncrement(
-                &g_unified_ui.photo_album_animation_log_count);
-            if (album_move_count <= 120 &&
-                (incoming_x != current_x || incoming_y != current_y)) {
-                Log("Photo album move #%ld self=%p current=%d,%d incoming=%d,%d -> %d,%d carousel=%d caller=%p",
-                    album_move_count, self, current_x, current_y,
-                    incoming_x, incoming_y, x, y,
-                    carousel_frame ? 1 : 0, immediate_call);
-            }
             original(self, x, y);
             return;
         }
@@ -4679,9 +4987,12 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         }
 
         if (primary_legacy_root || IsKnownLayoutRoot(parent)) {
-            if (parent == g_unified_ui.primary_root) {
-                ReflowExistingRootChildren(parent);
-            }
+            // Do not rescan the complete root from this move callback. World
+            // overlays (notably the character hover/status tag) are moved on
+            // every mouse update, and rescanning thousands of siblings here
+            // stalls the render thread. The object being moved is adapted by
+            // the dispatch below; newly attached siblings are picked up by
+            // their own Move call or by the low-frequency maintenance pass.
             const int width = *reinterpret_cast<int*>(bytes + 0x88);
             const int height = *reinterpret_cast<int*>(bytes + 0x8C);
             // Full-canvas proxy objects are layout containers, not visible HUD
@@ -4703,6 +5014,7 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 IsRadialInteractionWheel(self, parent, width, height) ||
                 IsMapLocationLabel(self, parent, width, height) ||
                 IsWorldStatusBubble(self, parent, width, height) ||
+                IsTeamFriendshipTag(self, parent, width, height) ||
                 IsWorldDialogueChoicePanel(self, parent, width, height) ||
                 IsWorldProjectedObject(self)) {
                 // Its children are positioned relative to the selected actor;
@@ -4710,23 +5022,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 RememberWorldProjectedObject(self);
                 RememberWorldMoveSource(world_source_return);
                 RememberProcessedLayoutObject(self);
-                if (IsMapLocationLabel(self, parent, width, height)) {
-                    const LONG map_count = InterlockedIncrement(
-                        &g_unified_ui.map_label_move_count);
-                    if (map_count <= 240) {
-                        Log("Unified UI map label move #%ld self=%p rect=%d,%d %dx%d caller=%p",
-                            map_count, self, x, y, width, height,
-                            static_cast<unsigned char*>(_ReturnAddress()) - 5);
-                    }
-                } else if (IsWorldStatusBubble(self, parent, width, height)) {
-                    const LONG bubble_count = InterlockedIncrement(
-                        &g_unified_ui.world_status_bubble_move_count);
-                    if (bubble_count <= 120) {
-                        Log("Unified UI world status bubble move #%ld self=%p rect=%d,%d %dx%d caller=%p",
-                            bubble_count, self, x, y, width, height,
-                            immediate_call);
-                    }
-                }
                 original(self, x, y);
                 return;
             } else if (self == g_publication_cover ||
@@ -4770,9 +5065,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                            FindStudioEventDropdownLayout(self);
                        layout && IsTitleTutorialDropdownAnchor(x, y)) {
                 RestoreTitleTutorialDropdown(*layout, x, y);
-                Log("Unified UI title tutorial dropdown restored self=%p native=%d,%d size=%dx%d",
-                    self, x, y, layout->native_width,
-                    layout->native_height);
                 return;
             } else if (!HasTitleTutorialPage() &&
                        FindStudioEventDropdownLayout(self)) {
@@ -4790,8 +5082,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 GetPhotoAlbumViewport(g_unified_ui.width,
                     g_unified_ui.height, viewport_x, viewport_y,
                     viewport_width, viewport_height);
-                const int native_x = x;
-                const int native_y = y;
                 *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
                     layout->native_width,
                     viewport_width, 800);
@@ -4801,10 +5091,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 x = viewport_x + MulDiv(x, viewport_width, 800);
                 y = viewport_y + MulDiv(y, viewport_height, 600);
                 RememberProcessedLayoutObject(self);
-                Log("Unified UI studio event dropdown move self=%p native=%d,%d -> %d,%d size=%dx%d",
-                    self, native_x, native_y, x, y,
-                    *reinterpret_cast<int*>(bytes + 0x88),
-                    *reinterpret_cast<int*>(bytes + 0x8C));
             } else if (IsTitleTutorialProfileDropdown(
                            self, parent, width, height)) {
                 // Tutorial selectors share the same pooled GUI objects as the
@@ -4819,28 +5105,14 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                      LegacyCanvas::height) / 2;
                 RememberProcessedLayoutObject(self);
             } else if (IsSmallWorldDialogueBubble(self, parent, width, height)) {
-                const int old_x = x;
-                const int old_y = y;
                 TransformWorldAnchorPosition(x, y);
                 RememberProcessedLayoutObject(self);
-                Log("Unified UI world dialogue move self=%p rect=%d,%d %dx%d -> %d,%d caller=%p",
-                    self, old_x, old_y, width, height, x, y,
-                    static_cast<unsigned char*>(_ReturnAddress()) - 5);
             } else if (IsToolbarAnimationObject(parent, width, height, x, y)) {
-                const int old_x = x;
-                const int old_y = y;
                 void* call_site = static_cast<unsigned char*>(
                     _ReturnAddress()) - 5;
                 TransformToolbarSequenceFrame(
                     self, width, height, x, y, call_site);
                 RememberProcessedLayoutObject(self);
-                const LONG animation_count = InterlockedIncrement(
-                    &g_unified_ui.toolbar_animation_log_count);
-                if (animation_count <= 120) {
-                    Log("Unified UI toolbar animation #%ld self=%p rect=%d,%d %dx%d -> %d,%d caller=%p",
-                        animation_count, self, old_x, old_y, width, height,
-                        x, y, call_site);
-                }
             } else if (IsGroupCanvas(self)) {
                 x = (static_cast<int>(g_unified_ui.width) - 800) / 2;
                 y = (static_cast<int>(g_unified_ui.height) - 600) / 2;
@@ -4857,8 +5129,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                     original(self, x, y);
                     return;
                 }
-                const int old_x = x;
-                const int old_y = y;
                 // The toolbar's collapse button is a separate root child just
                 // left of GameMain. Lower-right children therefore share the
                 // same group anchor even if a small child's center is middle.
@@ -4868,11 +5138,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                     TransformRootChildPosition(width, height, x, y);
                 }
                 RememberProcessedLayoutObject(self);
-                const LONG count = InterlockedIncrement(&g_unified_ui.transformed_count);
-                if (count <= 80 && (x != old_x || y != old_y)) {
-                    Log("Unified UI move #%ld self=%p parent=%p rect=%d,%d %dx%d -> %d,%d",
-                        count, self, parent, old_x, old_y, width, height, x, y);
-                }
             }
         }
     }
@@ -4895,6 +5160,18 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
         Log("Unified UI hook signature mismatch at %p", target);
         LogProbeBytes(target, 16);
         return false;
+    }
+
+    auto* resize_target = reinterpret_cast<unsigned char*>(executable) +
+        0x118690;
+    const unsigned char resize_expected[] = {
+        0x53, 0x8B, 0x5C, 0x24, 0x0C, 0x56, 0x57,
+    };
+    if (std::memcmp(resize_target, resize_expected,
+                    sizeof(resize_expected)) == 0) {
+        g_gui_resize = reinterpret_cast<GuiResizeFn>(resize_target);
+    } else {
+        Log("Unified UI resize signature mismatch at %p", resize_target);
     }
 
     constexpr size_t stolen_size = sizeof(expected);

@@ -58,16 +58,21 @@ Config LoadConfig(const std::wstring& ini_path) {
         L"Widescreen", L"NativeRender", 0, ini_path.c_str()) != 0;
     config.ui_scale_mode = std::clamp(static_cast<int>(GetPrivateProfileIntW(
         L"Widescreen", L"UIScaleMode", 1, ini_path.c_str())), 0, 2);
-    config.ui_draw_diagnostics = GetPrivateProfileIntW(
-        L"Widescreen", L"UIDrawDiagnostics", 0, ini_path.c_str()) != 0;
+    config.debug_mode = GetPrivateProfileIntW(
+        L"Widescreen", L"DebugMode", 0, ini_path.c_str()) != 0;
+    config.ui_draw_diagnostics = config.debug_mode &&
+        GetPrivateProfileIntW(
+            L"Widescreen", L"UIDrawDiagnostics", 0, ini_path.c_str()) != 0;
     config.suppress_transparent_ui = GetPrivateProfileIntW(
         L"Widescreen", L"SuppressTransparentUI", 0, ini_path.c_str()) != 0;
-    config.ui_container_probe = GetPrivateProfileIntW(
-        L"Widescreen", L"UIContainerProbe", 0, ini_path.c_str()) != 0;
+    config.ui_container_probe = config.debug_mode &&
+        GetPrivateProfileIntW(
+            L"Widescreen", L"UIContainerProbe", 0, ini_path.c_str()) != 0;
     config.suppress_proxy_containers = GetPrivateProfileIntW(
         L"Widescreen", L"SuppressProxyContainers", 0, ini_path.c_str()) != 0;
-    config.gui_runtime_probe = GetPrivateProfileIntW(
-        L"Widescreen", L"GUIRuntimeProbe", 0, ini_path.c_str()) != 0;
+    config.gui_runtime_probe = config.debug_mode &&
+        GetPrivateProfileIntW(
+            L"Widescreen", L"GUIRuntimeProbe", 0, ini_path.c_str()) != 0;
     config.unified_ui_layout = GetPrivateProfileIntW(
         L"Widescreen", L"UnifiedUILayout", 1, ini_path.c_str()) != 0;
     config.title_screen_mode = std::clamp(static_cast<int>(

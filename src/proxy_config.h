@@ -15,6 +15,7 @@ struct Config {
     bool borderless = false;
     bool native_render = false;
     int ui_scale_mode = 1;
+    bool debug_mode = false;
     bool ui_draw_diagnostics = false;
     bool suppress_transparent_ui = false;
     bool ui_container_probe = false;

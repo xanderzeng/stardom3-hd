@@ -26,9 +26,6 @@ struct LayoutContext {
     void* primary_root = nullptr;
     ULONGLONG last_refresh_tick = 0;
     volatile LONG transformed_count = 0;
-    volatile LONG map_label_move_count = 0;
-    volatile LONG world_status_bubble_move_count = 0;
-    volatile LONG toolbar_animation_log_count = 0;
     void* schedule_root = nullptr;
     void* schedule_highlight_rows[7]{};
     ULONGLONG last_schedule_hover_tick = 0;
@@ -37,7 +34,6 @@ struct LayoutContext {
     bool photo_album_viewport_logged = false;
     bool photo_album_viewport_active = false;
     ULONGLONG last_photo_album_visible_tick = 0;
-    volatile LONG photo_album_animation_log_count = 0;
     struct PhotoAlbumAnimationSequence {
         void* object = nullptr;
         bool active = false;

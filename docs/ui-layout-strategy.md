@@ -43,8 +43,48 @@ old 800x600 canvas. Source matching is a last-resort fallback after all known
 screen-space surfaces, so a shared caller cannot override a schedule panel or
 toolbar's specialized transform. Compact early-game toolbars use their native
 six-item 275px width, while the temporary five-item construction state and the
-later seven-item toolbar use 230px and 320px respectively. Object identity is retained when auto-sized
-tags change width with their text.
+later seven-item toolbar use 230px and 320px respectively. Visible toolbar
+buttons are normalized into the authored `5, 51, 96, 141, 186, 231, 276`
+slots whenever the active count changes. This repairs early saves whose
+five-to-six transition expands the background but leaves the last two buttons
+overlapping. The identified toolbar root is retained and its seven direct
+children are checked once per rendered-frame interval, because entering a
+venue and loading a save can both run the scene controller after the periodic
+root layout pass and overwrite an already-correct slot. Object identity is
+retained when auto-sized tags change width with their text.
+
+Toolbar width changes use Stardom3's native GUI `SetSize` path. Writing the
+width field alone updates bounds and anchoring but does not invoke the Plane
+virtual that rebuilds its background geometry, leaving a seven-slot backing
+behind a compact five-button toolbar. The native rebuild still maps the full
+seven-slot `7001` texture onto the shorter quad, so the render hook recognizes
+only that bottom-right background quad and limits its horizontal UV range to
+`5/7` or `6/7`. This preserves the authored slot spacing instead of squeezing
+seven backing cells underneath five or six buttons.
+
+The team-formation friendship tag is another world-following control, but its
+66x19 root has two children: a 20x18 numeric label and a 15x15 relationship
+icon. That complete signature bypasses page anchoring and keeps the position
+submitted by the team controller. In particular, a native `(320,411)` tag at
+1280x720 remains `(320,411)` instead of being shifted to `(560,531)`.
+
+Centered 800x600 pages retain their authored dimensions after their initial
+placement. A child move under such a page is not treated as new-page
+construction once the parent has been processed. This is important for world
+dialogue: advancing one line moves several dialogue children, and replaying a
+complete primary-root reflow for each move causes a visible input stall.
+
+The random phone event uses a zero-sized `BababaCallOut` root whose phone
+button is dynamically parked at `(-40,-40)` while idle. The root is identified
+by its complete five-child structure rather than by the button's transient
+position. The zero-sized structural root keeps its visibility byte cleared
+even while its children render, so the ringing phase is identified from the
+visible phone button with all dialogue panels hidden. The retained button is
+restored immediately to its bottom-left widescreen anchor, and later
+off-screen position writes are corrected in the GUI move hook before they can
+overwrite it. Once a dialogue,
+confirmation, countdown or question panel is visible, the event controller
+again owns the button position.
 
 The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble
 structure as projected NPC dialogue, but its native `(320,60)` coordinate is

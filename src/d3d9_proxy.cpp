@@ -26,6 +26,7 @@ Direct3DCreate9Fn g_create9 = nullptr;
 Direct3DCreate9ExFn g_create9_ex = nullptr;
 std::wstring g_module_dir;
 ULONGLONG g_attach_tick = 0;
+bool g_debug_mode = false;
 
 
 std::wstring ModuleDirectory() {
@@ -65,6 +66,10 @@ void Log(const char* format, ...) {
     MultiByteToWideChar(CP_UTF8, 0, message, -1, wide, static_cast<int>(std::size(wide)));
     std::fwprintf(file, L"%ls\n", wide);
     std::fclose(file);
+}
+
+bool IsDebugModeEnabled() {
+    return g_debug_mode;
 }
 
 
@@ -157,6 +162,7 @@ public:
         }
 
         const Config config = LoadConfig(IniPath());
+        g_debug_mode = config.debug_mode;
         if (!config.enabled) {
             Log("Patch disabled; forwarding CreateDevice unchanged");
             return real_->CreateDevice(adapter, type, focus_window, flags, parameters, device);
@@ -193,10 +199,11 @@ public:
         HWND target_window = patched.hDeviceWindow ? patched.hDeviceWindow : focus_window;
         ResizeClientArea(target_window, output_width, output_height, config.borderless);
 
-        Log("CreateDevice: requested=%ux%u windowed=%d, patched backbuffer=%ux%u client=%ux%u native=%d borderless=%d",
+        Log("CreateDevice: requested=%ux%u windowed=%d, patched backbuffer=%ux%u client=%ux%u native=%d borderless=%d debug=%d",
             original_width, original_height, parameters->Windowed,
             patched.BackBufferWidth, patched.BackBufferHeight,
-            output_width, output_height, config.native_render, config.borderless);
+            output_width, output_height, config.native_render,
+            config.borderless, config.debug_mode);
 
         const HRESULT result = real_->CreateDevice(adapter, type, focus_window, flags, &patched, device);
         if (SUCCEEDED(result)) {

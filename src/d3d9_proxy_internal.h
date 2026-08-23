@@ -17,10 +17,12 @@ extern ULONGLONG g_attach_tick;
 
 void Log(const char* format, ...);
 void LogProbeBytes(const unsigned char* address, size_t count);
+bool IsDebugModeEnabled();
 
 bool CanReadGuiObject(const void* object);
 void RefreshUnifiedUILayout();
 void RefreshUnifiedUILayoutNow();
+bool GetToolbarBackgroundRenderRect(RECT& rect, float& texture_width_ratio);
 void RefreshInGameCGOverlays();
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode);
 bool PatchMapLocationProjectionBounds(UINT width, UINT height);
