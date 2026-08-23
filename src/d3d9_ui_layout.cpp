@@ -1290,6 +1290,14 @@ TitleNativeGeometry g_artist_profile_geometry[512]{};
 size_t g_artist_profile_geometry_count = 0;
 void* g_artist_profile_root = nullptr;
 
+struct ArtistRadarVertexCache {
+    float x[7][4]{};
+    float y[7][4]{};
+    bool valid = false;
+};
+
+ArtistRadarVertexCache g_artist_radar_vertices;
+
 bool IsCachedAnnouncementRootValid();
 
 void ResetArtistProfileGeometry(void* root) {
@@ -1302,6 +1310,107 @@ void ResetArtistProfileGeometry(void* root) {
 
 bool IsArtistProfileDescendant(void* object) {
     return IsDescendantOf(object, g_artist_profile_root);
+}
+
+void CorrectArtistRadarVertices() {
+    if (!CanReadGuiObject(g_artist_profile_root) ||
+        *reinterpret_cast<unsigned char*>(
+            static_cast<unsigned char*>(g_artist_profile_root) + 0x99) == 0) {
+        g_artist_radar_vertices.valid = false;
+        return;
+    }
+
+    void* profile_card = nullptr;
+    for (size_t i = 0; i < g_artist_profile_geometry_count; ++i) {
+        const TitleNativeGeometry& geometry = g_artist_profile_geometry[i];
+        if (geometry.x == 125 && geometry.y == 159 &&
+            geometry.width == 549 && geometry.height == 281 &&
+            CanReadGuiObject(geometry.object)) {
+            profile_card = geometry.object;
+            break;
+        }
+    }
+    if (!profile_card) {
+        return;
+    }
+
+    auto* root_bytes = static_cast<unsigned char*>(g_artist_profile_root);
+    auto* card_bytes = static_cast<unsigned char*>(profile_card);
+    const float root_x = static_cast<float>(
+        *reinterpret_cast<int*>(root_bytes + 0x80));
+    const float root_y = static_cast<float>(
+        *reinterpret_cast<int*>(root_bytes + 0x84));
+    const float card_x = static_cast<float>(
+        *reinterpret_cast<int*>(card_bytes + 0x80));
+    const float card_y = static_cast<float>(
+        *reinterpret_cast<int*>(card_bytes + 0x84));
+
+    HMODULE executable = GetModuleHandleW(nullptr);
+    if (!executable) {
+        return;
+    }
+    auto* controller = reinterpret_cast<unsigned char*>(executable) + 0x3A9C78;
+    const uintptr_t expected_vtable =
+        reinterpret_cast<uintptr_t>(executable) + 0x2EF20C;
+    if (*reinterpret_cast<uintptr_t*>(controller) != expected_vtable) {
+        return;
+    }
+
+    // StarState's custom renderer stores seven triangle pairs at +0x2C0.
+    // Its authored local centre is (436,125), but the game only adds the
+    // profile card's relative position.  Ordinary GUI objects subsequently
+    // receive the root offset and 800x600-to-output scale; these raw vertices
+    // do not, which places the polygon over the information panel in
+    // widescreen modes.
+    constexpr size_t kVerticesOffset = 0x2C0;
+    constexpr size_t kVertexStride = 0x20;
+    constexpr float kNativeCenterX = 436.0f;
+    constexpr float kNativeCenterY = 125.0f;
+    auto* first = reinterpret_cast<float*>(controller + kVerticesOffset);
+    const float expected_raw_center_x = card_x + kNativeCenterX;
+    const float expected_raw_center_y = card_y + kNativeCenterY;
+    const bool game_regenerated_vertices =
+        std::abs(first[0] - expected_raw_center_x) <= 1.5f &&
+        std::abs(first[1] - expected_raw_center_y) <= 1.5f;
+    if (game_regenerated_vertices) {
+        for (size_t i = 0; i < 7; ++i) {
+            auto* vertex = reinterpret_cast<float*>(
+                controller + kVerticesOffset + i * kVertexStride);
+            for (size_t point = 0; point < 4; ++point) {
+                g_artist_radar_vertices.x[i][point] = vertex[point * 2];
+                g_artist_radar_vertices.y[i][point] = vertex[point * 2 + 1];
+            }
+        }
+        g_artist_radar_vertices.valid = true;
+    }
+    if (!g_artist_radar_vertices.valid) {
+        return;
+    }
+
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    const float scale_x = static_cast<float>(viewport_width) / 800.0f;
+    const float scale_y = static_cast<float>(viewport_height) / 600.0f;
+    const auto transform_x = [&](float raw_x) {
+        return root_x + card_x + (raw_x - card_x) * scale_x;
+    };
+    const auto transform_y = [&](float raw_y) {
+        return root_y + card_y + (raw_y - card_y) * scale_y;
+    };
+    for (size_t i = 0; i < 7; ++i) {
+        auto* vertex = reinterpret_cast<float*>(
+            controller + kVerticesOffset + i * kVertexStride);
+        for (size_t point = 0; point < 4; ++point) {
+            vertex[point * 2] = transform_x(
+                g_artist_radar_vertices.x[i][point]);
+            vertex[point * 2 + 1] = transform_y(
+                g_artist_radar_vertices.y[i][point]);
+        }
+    }
 }
 
 void ScaleArtistProfileSubtree(void* object, int depth = 0) {
@@ -2670,6 +2779,7 @@ void RefreshUnifiedUILayout() {
     }
     const ULONGLONG now = GetTickCount64();
     UpdateTitleStripMotion(now);
+    CorrectArtistRadarVertices();
     // Before the title root is known, scan on the first draw submissions so
     // the page is aspect-fitted before its first visible frame. Once found,
     // return to the low-frequency maintenance pass used by ordinary screens.
