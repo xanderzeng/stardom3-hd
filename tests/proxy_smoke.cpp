@@ -11,12 +11,62 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2) {
-        std::fwprintf(stderr, L"usage: proxy_smoke <d3d9.dll>\n");
+    if (argc != 2 && argc != 4 && argc != 6) {
+        std::fwprintf(stderr,
+            L"usage: proxy_smoke <d3d9.dll> [expected-client-width expected-client-height]\n"
+            L"       proxy_smoke <d3d9.dll> <config-width> <config-height> <expected-client-width> <expected-client-height>\n"
+            L"       use -1 -1 to require an unchanged client area\n");
         return 2;
     }
 
-    HMODULE proxy = LoadLibraryW(argv[1]);
+    const int expected_index = argc == 6 ? 4 : 2;
+    const long expected_width = argc >= 4 ?
+        std::wcstol(argv[expected_index], nullptr, 10) : 1920;
+    const long expected_height = argc >= 4 ?
+        std::wcstol(argv[expected_index + 1], nullptr, 10) : 1080;
+
+    wchar_t staged_directory[MAX_PATH]{};
+    wchar_t staged_dll[MAX_PATH]{};
+    wchar_t staged_ini[MAX_PATH]{};
+    wchar_t staged_log[MAX_PATH]{};
+    const wchar_t* dll_path = argv[1];
+    if (argc == 6) {
+        wchar_t temporary_root[MAX_PATH]{};
+        if (!GetTempPathW(MAX_PATH, temporary_root)) {
+            std::fwprintf(stderr, L"GetTempPath failed: %lu\n", GetLastError());
+            return 9;
+        }
+        swprintf_s(staged_directory, L"%lsStardom3ProxySmoke-%lu",
+                   temporary_root, GetCurrentProcessId());
+        if (!CreateDirectoryW(staged_directory, nullptr) &&
+            GetLastError() != ERROR_ALREADY_EXISTS) {
+            std::fwprintf(stderr, L"CreateDirectory failed: %lu\n", GetLastError());
+            return 10;
+        }
+        swprintf_s(staged_dll, L"%ls\\d3d9.dll", staged_directory);
+        swprintf_s(staged_ini, L"%ls\\Stardom3.Widescreen.ini",
+                   staged_directory);
+        swprintf_s(staged_log, L"%ls\\Stardom3.Widescreen.log",
+                   staged_directory);
+        wchar_t source_dll[MAX_PATH]{};
+        if (!GetFullPathNameW(argv[1], MAX_PATH, source_dll, nullptr) ||
+            !CopyFileW(source_dll, staged_dll, FALSE)) {
+            std::fwprintf(stderr, L"CopyFile failed: %lu\n", GetLastError());
+            return 11;
+        }
+        WritePrivateProfileStringW(L"Widescreen", L"Enabled", L"1", staged_ini);
+        if (std::wcscmp(argv[2], L"-") != 0) {
+            WritePrivateProfileStringW(
+                L"Widescreen", L"Width", argv[2], staged_ini);
+        }
+        if (std::wcscmp(argv[3], L"-") != 0) {
+            WritePrivateProfileStringW(
+                L"Widescreen", L"Height", argv[3], staged_ini);
+        }
+        dll_path = staged_dll;
+    }
+
+    HMODULE proxy = LoadLibraryW(dll_path);
     if (!proxy) {
         std::fwprintf(stderr, L"LoadLibrary failed: %lu\n", GetLastError());
         return 3;
@@ -43,6 +93,8 @@ int wmain(int argc, wchar_t** argv) {
         std::fwprintf(stderr, L"CreateWindow failed: %lu\n", GetLastError());
         return 6;
     }
+    RECT initial_client{};
+    GetClientRect(window, &initial_client);
 
     IDirect3D9* d3d = create9(D3D_SDK_VERSION);
     if (!d3d) {
@@ -78,11 +130,22 @@ int wmain(int argc, wchar_t** argv) {
     UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
     FreeLibrary(proxy);
 
-    const bool patched = client.right == 1920 && client.bottom == 1080;
+    if (argc == 6) {
+        DeleteFileW(staged_log);
+        DeleteFileW(staged_ini);
+        DeleteFileW(staged_dll);
+        RemoveDirectoryW(staged_directory);
+    }
+
+    const bool expect_unchanged = expected_width < 0 && expected_height < 0;
+    const bool patched = expect_unchanged ?
+        (client.right == initial_client.right &&
+         client.bottom == initial_client.bottom) :
+        (client.right == expected_width && client.bottom == expected_height);
     // Some non-interactive CI desktops cannot create any D3D9 device. In that
     // environment, window resizing still verifies that the proxy loaded and
     // intercepted CreateDevice. A real device is checked during game QA.
-    const bool device_ok = FAILED(result) ||
-                           (parameters.BackBufferWidth == 800 && parameters.BackBufferHeight == 600);
+    const bool device_ok = FAILED(result) || expect_unchanged ||
+        (parameters.BackBufferWidth == 800 && parameters.BackBufferHeight == 600);
     return patched && device_ok ? 0 : 8;
 }

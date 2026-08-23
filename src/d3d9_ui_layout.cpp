@@ -1,4 +1,7 @@
 #include "d3d9_proxy_internal.h"
+#include "gui_object.h"
+#include "ui_layout_registry.h"
+#include "ui_page_geometry.h"
 
 #include <intrin.h>
 
@@ -11,8 +14,6 @@
 
 namespace stardom {
 
-UnifiedUILayoutState g_unified_ui;
-
 using GuiMoveFn = void(__thiscall*)(void*, int, int);
 using MapLocationUpdateFn = bool(__thiscall*)(void*, void*);
 
@@ -24,165 +25,39 @@ struct MapLocationDiagnosticState {
 
 MapLocationDiagnosticState g_map_location_diagnostic;
 
-bool IsKnownLayoutRoot(void* object) {
-    for (size_t i = 0; i < g_unified_ui.root_count; ++i) {
-        if (g_unified_ui.roots[i] == object) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void RememberLayoutRoot(void* object) {
-    if (!object || IsKnownLayoutRoot(object) ||
-        g_unified_ui.root_count >= std::size(g_unified_ui.roots)) {
-        return;
-    }
-    g_unified_ui.roots[g_unified_ui.root_count++] = object;
-    Log("Unified UI root discovered: object=%p output=%ux%u", object,
-        g_unified_ui.width, g_unified_ui.height);
-}
-
-bool IsObjectInList(void* object, void* const* objects, size_t count) {
-    for (size_t i = 0; i < count; ++i) {
-        if (objects[i] == object) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void RememberWorldProjectedObject(void* object) {
-    if (!object || IsObjectInList(object, g_unified_ui.world_projected_objects,
-                                  g_unified_ui.world_projected_object_count) ||
-        g_unified_ui.world_projected_object_count >=
-            std::size(g_unified_ui.world_projected_objects)) {
-        return;
-    }
-    g_unified_ui.world_projected_objects[
-        g_unified_ui.world_projected_object_count++] = object;
-}
-
-bool IsWorldProjectedObject(void* object) {
-    return IsObjectInList(object, g_unified_ui.world_projected_objects,
-                          g_unified_ui.world_projected_object_count);
-}
-
-void RememberWorldMoveSource(void* source_return) {
-    if (!source_return ||
-        IsObjectInList(source_return, g_unified_ui.world_move_sources,
-                       g_unified_ui.world_move_source_count) ||
-        g_unified_ui.world_move_source_count >=
-            std::size(g_unified_ui.world_move_sources)) {
-        return;
-    }
-    g_unified_ui.world_move_sources[g_unified_ui.world_move_source_count++] =
-        source_return;
-    Log("Unified UI learned world move source return=%p", source_return);
-}
-
-bool IsWorldMoveSource(void* source_return) {
-    return IsObjectInList(source_return, g_unified_ui.world_move_sources,
-                          g_unified_ui.world_move_source_count);
-}
-
-void RememberGroupCanvas(void* object) {
-    if (!object || IsObjectInList(object, g_unified_ui.group_canvases,
-                                  g_unified_ui.group_canvas_count) ||
-        g_unified_ui.group_canvas_count >= std::size(g_unified_ui.group_canvases)) {
-        return;
-    }
-    g_unified_ui.group_canvases[g_unified_ui.group_canvas_count++] = object;
-    Log("Unified UI centered page=%p", object);
-}
-
-bool IsGroupCanvas(void* object) {
-    return IsObjectInList(object, g_unified_ui.group_canvases,
-                          g_unified_ui.group_canvas_count);
-}
-
-void RememberWorldRoot(void* object) {
-    if (!object || IsObjectInList(object, g_unified_ui.world_roots,
-                                  g_unified_ui.world_root_count) ||
-        g_unified_ui.world_root_count >= std::size(g_unified_ui.world_roots)) {
-        return;
-    }
-    g_unified_ui.world_roots[g_unified_ui.world_root_count++] = object;
-    Log("Unified UI world overlay=%p", object);
-}
-
-bool IsWorldRoot(void* object) {
-    return IsObjectInList(object, g_unified_ui.world_roots,
-                          g_unified_ui.world_root_count);
-}
-
-bool IsProcessedLayoutObject(void* object) {
-    for (size_t i = 0; i < g_unified_ui.processed_count; ++i) {
-        if (g_unified_ui.processed[i] == object) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void RememberProcessedLayoutObject(void* object) {
-    if (!object || IsProcessedLayoutObject(object) ||
-        g_unified_ui.processed_count >= std::size(g_unified_ui.processed)) {
-        return;
-    }
-    g_unified_ui.processed[g_unified_ui.processed_count++] = object;
-}
-
-int TransformAnchoredCoordinate(int position, int extent, int legacy_size,
-                                int output_size) {
-    if (output_size <= legacy_size || position < 0 || position > legacy_size) {
-        return position;
-    }
-
-    const int center_twice = position * 2 + std::max(extent, 0);
-    const int first_third_twice = (legacy_size * 2) / 3;
-    const int second_third_twice = (legacy_size * 4) / 3;
-    const int expansion = output_size - legacy_size;
-    if (center_twice < first_third_twice) {
-        return position;
-    }
-    if (center_twice > second_third_twice) {
-        return position + expansion;
-    }
-    return position + expansion / 2;
-}
-
 void TransformRootChildPosition(int width, int height, int& x, int& y) {
     // Treat a coordinate pair as one coordinate space. Dynamic GUI objects
     // sometimes feed their already-transformed/output-space x back through
     // this hook while y still happens to fall below 600. Transforming the
-    // axes independently then creates a mixed pair (for example 1531,420 ->
-    // 1531,900). It also makes repeated show/hide or animation callbacks
+    // axes independently then creates a mixed output/legacy coordinate pair.
+    // It also makes repeated show/hide or animation callbacks
     // non-idempotent. Only coordinates wholly inside the legacy canvas are
     // eligible for legacy edge anchoring; staging and output-space positions
     // pass through unchanged.
-    if (x < 0 || x > 800 || y < 0 || y > 600) {
+    if (x < 0 || x > LegacyCanvas::width ||
+        y < 0 || y > LegacyCanvas::height) {
         return;
     }
     const int vertical_center_twice = y * 2 + std::max(height, 0);
-    const bool bottom_group = vertical_center_twice > (600 * 4) / 3;
-    if (bottom_group && x >= 400 && x <= 800) {
-        x += static_cast<int>(g_unified_ui.width) - 800;
+    const bool bottom_group = vertical_center_twice >
+        (LegacyCanvas::height * 4) / 3;
+    if (bottom_group && x >= LegacyCanvas::width / 2 &&
+        x <= LegacyCanvas::width) {
+        x += static_cast<int>(g_unified_ui.width) - LegacyCanvas::width;
     } else {
-        x = TransformAnchoredCoordinate(x, width, 800,
+        x = TransformAnchoredCoordinate(x, width, LegacyCanvas::width,
             static_cast<int>(g_unified_ui.width));
     }
-    y = TransformAnchoredCoordinate(y, height, 600,
+    y = TransformAnchoredCoordinate(y, height, LegacyCanvas::height,
         static_cast<int>(g_unified_ui.height));
 }
 
 void TransformWorldPosition(int width, int height, int& x, int& y) {
-    const int center_x_twice = x * 2 + std::max(width, 0);
-    const int center_y_twice = y * 2 + std::max(height, 0);
-    x = static_cast<int>((static_cast<int64_t>(center_x_twice) *
-        g_unified_ui.width) / (800 * 2)) - width / 2;
-    y = static_cast<int>((static_cast<int64_t>(center_y_twice) *
-        g_unified_ui.height) / (600 * 2)) - height / 2;
+    const PointI transformed = TransformWorldCoordinate(
+        x, y, width, height, static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    x = transformed.x;
+    y = transformed.y;
 }
 
 void TransformWorldAnchorPosition(int& x, int& y) {
@@ -205,20 +80,6 @@ bool IsWorldInteractionCanvas(void* object, void* parent,
         height >= 450 && height <= 470;
 }
 
-bool CanReadGuiObject(const void* object) {
-    if (!object) {
-        return false;
-    }
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(object, &info, sizeof(info)) || info.State != MEM_COMMIT ||
-        (info.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
-        return false;
-    }
-    const uintptr_t start = reinterpret_cast<uintptr_t>(object);
-    const uintptr_t end = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-    return end >= start + 0xFC;
-}
-
 bool IsRadialInteractionWheel(void* object, void* parent,
                               int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -229,8 +90,7 @@ bool IsRadialInteractionWheel(void* object, void* parent,
     // Four 32x32 buttons form the shallow arc displayed above a selected
     // character. Match the child structure so unrelated 160x70 widgets keep
     // their normal screen anchoring.
-    void* child = *reinterpret_cast<void**>(
-        static_cast<unsigned char*>(object) + 0xF4);
+    void* child = GuiPointer(object, GuiObjectField::first_child);
     size_t count = 0;
     while (CanReadGuiObject(child) && count < 5) {
         auto* child_bytes = static_cast<unsigned char*>(child);
@@ -342,11 +202,10 @@ bool IsTitleTutorialPage(void* object, void* parent,
         static_cast<unsigned char*>(object) + 0xF4);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 24) {
-        auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
         stage_layers += child_x >= 198 && child_x <= 202 &&
             child_y >= -2 && child_y <= 2 &&
             child_width >= 398 && child_width <= 402 &&
@@ -363,7 +222,7 @@ bool IsTitleTutorialPage(void* object, void* parent,
             child_y >= 356 && child_y <= 360 &&
             child_width >= 798 && child_width <= 802 &&
             child_height >= 240 && child_height <= 244;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiPointer(child, GuiObjectField::next_sibling);
     }
     return visited == 5 && stage_layers == 2 && central_prompt &&
         compact_control && lower_explanation;
@@ -478,6 +337,51 @@ bool IsTitleTutorialQuestionPage(void* object, void* parent,
         child = *reinterpret_cast<void**>(bytes + 0xF8);
     }
     return visited == 4 && answer_buttons == 3 && question_panel;
+}
+
+bool IsArtistProfilePage(void* object, void* parent,
+                         int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // The artist profile is a direct-root 800x600 page. Its stable top-level
+    // signature is four 110x35 tabs, the 549x281 profile card (which owns the
+    // portrait, attributes, radar grid, data polygon and labels), and a hidden
+    // 100x500 side strip. Match the complete group so unrelated legacy dialogs
+    // continue to use the native-size centred-page path below.
+    int tabs = 0;
+    bool profile_card = false;
+    bool side_strip = false;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 10) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const bool tab_x =
+            (child_x >= 158 && child_x <= 162) ||
+            (child_x >= 273 && child_x <= 277) ||
+            (child_x >= 388 && child_x <= 392) ||
+            (child_x >= 503 && child_x <= 507);
+        tabs += tab_x && child_y >= 127 && child_y <= 131 &&
+            child_width >= 108 && child_width <= 112 &&
+            child_height >= 33 && child_height <= 37;
+        profile_card |= child_x >= 123 && child_x <= 127 &&
+            child_y >= 157 && child_y <= 161 &&
+            child_width >= 547 && child_width <= 551 &&
+            child_height >= 279 && child_height <= 283;
+        side_strip |= child_x >= 18 && child_x <= 22 &&
+            child_y >= 48 && child_y <= 52 &&
+            child_width >= 98 && child_width <= 102 &&
+            child_height >= 498 && child_height <= 502;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited == 6 && tabs == 4 && profile_card && side_strip;
 }
 
 bool IsEventPublicationPanel(void* object, void* parent,
@@ -779,7 +683,7 @@ void GetInGameCGCaptionPosition(int native_y, int& x, int& y) {
         viewport_x, viewport_y, viewport_width, viewport_height);
     // Match the photo-album CG caption treatment: preserve the complete
     // authored 800x600 overlay and translate it as one native-size canvas.
-    // Do not scale y through the 1440x1080 image viewport; doing so feeds an
+    // Do not scale y through the aspect-fit image viewport; doing so feeds an
     // already moved value back into the next refresh and pushes the bar down.
     x = viewport_x + (viewport_width - 800) / 2;
     y = native_y + (static_cast<int>(g_unified_ui.height) - 600) / 2;
@@ -938,43 +842,21 @@ void LayoutInGameCGRoot(void* object) {
 }
 
 bool IsPhotoAlbumDescendant(void* object) {
-    void* cursor = object;
-    for (int depth = 0; CanReadGuiObject(cursor) && depth < 10; ++depth) {
-        if (cursor == g_unified_ui.photo_album_root) {
-            return true;
-        }
-        cursor = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(cursor) + 0xF0);
-    }
-    return false;
+    return IsDescendantOf(object, g_unified_ui.photo_album_root);
 }
 
 void GetPhotoAlbumViewport(UINT output_width, UINT output_height,
                            int& x, int& y, int& width, int& height) {
-    // Preserve the native 4:3 aspect. At 1920x1080 this produces a centered
-    // 1440x1080 content area instead of the previous 2.4x/1.8x stretch.
-    if (static_cast<uint64_t>(output_width) * 600 <=
-        static_cast<uint64_t>(output_height) * 800) {
-        width = static_cast<int>(output_width);
-        height = MulDiv(width, 600, 800);
-    } else {
-        height = static_cast<int>(output_height);
-        width = MulDiv(height, 800, 600);
-    }
-    x = (static_cast<int>(output_width) - width) / 2;
-    y = (static_cast<int>(output_height) - height) / 2;
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(output_width), static_cast<int>(output_height));
+    x = viewport.x;
+    y = viewport.y;
+    width = viewport.width;
+    height = viewport.height;
 }
 
 bool IsTitleScreenDescendant(void* object) {
-    void* cursor = object;
-    for (int depth = 0; CanReadGuiObject(cursor) && depth < 10; ++depth) {
-        if (cursor == g_unified_ui.title_screen_root) {
-            return true;
-        }
-        cursor = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(cursor) + 0xF0);
-    }
-    return false;
+    return IsDescendantOf(object, g_unified_ui.title_screen_root);
 }
 
 bool IsTitleScreenVisible() {
@@ -994,13 +876,7 @@ bool IsTitleTutorialVisible() {
     return *(static_cast<unsigned char*>(g_title_tutorial_root) + 0x99) != 0;
 }
 
-struct TitleNativeGeometry {
-    void* object = nullptr;
-    int x = 0;
-    int y = 0;
-    int width = 0;
-    int height = 0;
-};
+using TitleNativeGeometry = NativeGeometry;
 
 TitleNativeGeometry g_title_native_geometry[1024]{};
 size_t g_title_native_geometry_count = 0;
@@ -1225,40 +1101,66 @@ size_t g_announcement_geometry_count = 0;
 void* g_announcement_root = nullptr;
 size_t g_announcement_artist_count = 0;
 thread_local bool g_scaling_announcement_subtree = false;
+TitleNativeGeometry g_artist_profile_geometry[512]{};
+size_t g_artist_profile_geometry_count = 0;
+void* g_artist_profile_root = nullptr;
 
 bool IsCachedAnnouncementRootValid();
 
-TitleNativeGeometry* FindGeometry(TitleNativeGeometry* geometries,
-                                  size_t count, void* object) {
-    for (size_t i = 0; i < count; ++i) {
-        if (geometries[i].object == object) {
-            return &geometries[i];
-        }
+void ResetArtistProfileGeometry(void* root) {
+    if (g_artist_profile_root == root) {
+        return;
     }
-    return nullptr;
+    g_artist_profile_root = root;
+    g_artist_profile_geometry_count = 0;
 }
 
-TitleNativeGeometry* RememberGeometry(TitleNativeGeometry* geometries,
-                                      size_t capacity, size_t& count,
-                                      void* object) {
-    if (!CanReadGuiObject(object)) {
-        return nullptr;
+bool IsArtistProfileDescendant(void* object) {
+    return IsDescendantOf(object, g_artist_profile_root);
+}
+
+void ScaleArtistProfileSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
     }
-    if (TitleNativeGeometry* existing = FindGeometry(
-            geometries, count, object)) {
-        return existing;
-    }
-    if (count >= capacity) {
-        return nullptr;
-    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     auto* bytes = static_cast<unsigned char*>(object);
-    TitleNativeGeometry& geometry = geometries[count++];
-    geometry.object = object;
-    geometry.x = *reinterpret_cast<int*>(bytes + 0x80);
-    geometry.y = *reinterpret_cast<int*>(bytes + 0x84);
-    geometry.width = *reinterpret_cast<int*>(bytes + 0x88);
-    geometry.height = *reinterpret_cast<int*>(bytes + 0x8C);
-    return &geometry;
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetArtistProfileGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_artist_profile_geometry,
+            std::size(g_artist_profile_geometry),
+            g_artist_profile_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 512) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleArtistProfileSubtree(child, depth + 1);
+        child = next;
+    }
 }
 
 void ResetTitleTutorialGeometry(void* root) {
@@ -1270,15 +1172,7 @@ void ResetTitleTutorialGeometry(void* root) {
 }
 
 bool IsTitleTutorialDescendant(void* object) {
-    void* cursor = object;
-    for (int depth = 0; CanReadGuiObject(cursor) && depth < 10; ++depth) {
-        if (cursor == g_title_tutorial_root) {
-            return true;
-        }
-        cursor = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(cursor) + 0xF0);
-    }
-    return false;
+    return IsDescendantOf(object, g_title_tutorial_root);
 }
 
 void ScaleTitleTutorialSubtree(void* object, int depth = 0) {
@@ -1381,15 +1275,7 @@ void ResetTitleTutorialQuestionGeometry(void* root) {
 }
 
 bool IsTitleTutorialQuestionDescendant(void* object) {
-    void* cursor = object;
-    for (int depth = 0; CanReadGuiObject(cursor) && depth < 6; ++depth) {
-        if (cursor == g_title_tutorial_question_root) {
-            return true;
-        }
-        cursor = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(cursor) + 0xF0);
-    }
-    return false;
+    return IsDescendantOf(object, g_title_tutorial_question_root, 6);
 }
 
 void ScaleTitleTutorialQuestionSubtree(void* object, int depth = 0) {
@@ -1499,15 +1385,7 @@ bool IsAnnouncementDescendant(void* object) {
     if (!IsCachedAnnouncementRootValid()) {
         return false;
     }
-    void* cursor = object;
-    for (int depth = 0; CanReadGuiObject(cursor) && depth < 8; ++depth) {
-        if (cursor == g_announcement_root) {
-            return true;
-        }
-        cursor = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(cursor) + 0xF0);
-    }
-    return false;
+    return IsDescendantOf(object, g_announcement_root, 8);
 }
 
 void ScaleAnnouncementSubtree(void* object, int depth = 0) {
@@ -1754,8 +1632,8 @@ void TransformScheduleJobHoverTooltip(int& x, int& y) {
         (static_cast<int>(g_unified_ui.width) - 800) / 2;
     const int center_y =
         (static_cast<int>(g_unified_ui.height) - 600) / 2;
-    // Artist-column legacy positions end at x=595. At 1920x1080 their
-    // translated positions begin at x=685. Keeping a small gap around the
+    // Artist-column legacy positions end at x=595. Their translated positions
+    // depend on the selected output. Keeping a small gap around the
     // center offset makes this idempotent when the game has already converted
     // the detail card's x to output space.
     if (x < center_x + 90) {
@@ -2264,6 +2142,23 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
                 viewport_x, viewport_y, viewport_width, viewport_height);
             Log("Unified UI title tutorial question aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (child == g_artist_profile_root) {
+            ScaleArtistProfileSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (IsArtistProfilePage(child, root, width, height)) {
+            ResetArtistProfileGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleArtistProfileSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI artist profile aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
         } else if (child == g_announcement_root &&
@@ -2782,6 +2677,40 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             return;
         }
     }
+    if (self == g_artist_profile_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsArtistProfileDescendant(self)) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_artist_profile_geometry,
+            std::size(g_artist_profile_geometry),
+            g_artist_profile_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
     if (self == g_announcement_root && IsCachedAnnouncementRootValid()) {
         int viewport_x = 0;
         int viewport_y = 0;
@@ -3125,7 +3054,8 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
 }
 
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) {
-    if (g_unified_ui.installed || width < 800 || height < 600) {
+    if (g_unified_ui.installed || width < LegacyCanvas::width ||
+        height < LegacyCanvas::height) {
         return g_unified_ui.installed;
     }
 
@@ -3178,7 +3108,7 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
 }
 
 bool PatchMapLocationProjectionBounds(UINT width, UINT height) {
-    if (width < 800 || height < 600) {
+    if (width < LegacyCanvas::width || height < LegacyCanvas::height) {
         return false;
     }
     HMODULE executable = GetModuleHandleW(nullptr);
