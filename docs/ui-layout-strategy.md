@@ -224,6 +224,17 @@ controls all use the same 4:3 transform. This avoids the former mixed layout
 where the profile surface remained at 800x600 while the renderer used the
 widescreen viewport for some attribute-chart submissions.
 
+The artist contract page follows the same aspect-fit policy. It is identified
+by its single 522x290 contract card, the 100x120 portrait, and the complete
+three-button action column. The page, card, portrait, labels, action buttons,
+and hit rectangles are cached and scaled as one subtree, including later
+runtime moves submitted by the contract controller.
+
+The signing and renewal dossier is a separate 802x602 page recognized by its
+single 434x410 panel, 100x120 portrait, and paired 98x28 decision buttons. The
+dossier subtree is aspect-fitted with its labels and hit rectangles, while the
+full-height character cut-in remains at its authored size as a separate root.
+
 ## Reference HUD positions
 
 | Output | `TodayDate` | `GameMain` |

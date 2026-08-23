@@ -418,6 +418,115 @@ bool IsArtistProfilePage(void* object, void* parent,
     return visited == 6 && tabs == 4 && profile_card && side_strip;
 }
 
+bool IsArtistContractPage(void* object, void* parent,
+                          int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // The artist contract page is a direct-root 800x600 page containing one
+    // 522x290 contract card. Match the card's portrait and complete three-
+    // button action column as well, so unrelated single-card dialogs retain
+    // the native-size centred-page layout.
+    auto* root_bytes = static_cast<unsigned char*>(object);
+    void* card = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    if (!CanReadGuiObject(card)) {
+        return false;
+    }
+    auto* card_bytes = static_cast<unsigned char*>(card);
+    if (*reinterpret_cast<int*>(card_bytes + 0x80) < 137 ||
+        *reinterpret_cast<int*>(card_bytes + 0x80) > 141 ||
+        *reinterpret_cast<int*>(card_bytes + 0x84) < 153 ||
+        *reinterpret_cast<int*>(card_bytes + 0x84) > 157 ||
+        *reinterpret_cast<int*>(card_bytes + 0x88) < 520 ||
+        *reinterpret_cast<int*>(card_bytes + 0x88) > 524 ||
+        *reinterpret_cast<int*>(card_bytes + 0x8C) < 288 ||
+        *reinterpret_cast<int*>(card_bytes + 0x8C) > 292 ||
+        *reinterpret_cast<void**>(card_bytes + 0xF8) != nullptr) {
+        return false;
+    }
+
+    int action_buttons = 0;
+    bool portrait = false;
+    void* child = *reinterpret_cast<void**>(card_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 20) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const bool action_y =
+            (child_y >= 149 && child_y <= 153) ||
+            (child_y >= 189 && child_y <= 193) ||
+            (child_y >= 229 && child_y <= 233);
+        action_buttons += child_x >= 411 && child_x <= 415 && action_y &&
+            child_width >= 90 && child_width <= 94 &&
+            child_height >= 30 && child_height <= 34;
+        portrait |= child_x >= 55 && child_x <= 59 &&
+            child_y >= 31 && child_y <= 35 &&
+            child_width >= 98 && child_width <= 102 &&
+            child_height >= 118 && child_height <= 122;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited == 13 && action_buttons == 3 && portrait;
+}
+
+bool IsArtistSigningPage(void* object, void* parent,
+                         int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 804 || height < 598 || height > 604) {
+        return false;
+    }
+
+    // Signing and renewal share an 802x602 direct-root page with one 434x410
+    // dossier panel. The full-height character cut-in is a separate sibling
+    // and intentionally remains at its authored size; only the dossier and
+    // its hit-test controls are aspect-fitted here.
+    auto* root_bytes = static_cast<unsigned char*>(object);
+    void* panel = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    if (!CanReadGuiObject(panel)) {
+        return false;
+    }
+    auto* panel_bytes = static_cast<unsigned char*>(panel);
+    if (*reinterpret_cast<int*>(panel_bytes + 0x80) < 181 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x80) > 185 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x84) < 93 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x84) > 97 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x88) < 432 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x88) > 436 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x8C) < 408 ||
+        *reinterpret_cast<int*>(panel_bytes + 0x8C) > 412 ||
+        *reinterpret_cast<void**>(panel_bytes + 0xF8) != nullptr) {
+        return false;
+    }
+
+    int action_buttons = 0;
+    bool portrait = false;
+    void* child = *reinterpret_cast<void**>(panel_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 40) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const bool button_x =
+            (child_x >= 183 && child_x <= 187) ||
+            (child_x >= 293 && child_x <= 297);
+        action_buttons += button_x && child_y >= 358 && child_y <= 362 &&
+            child_width >= 96 && child_width <= 100 &&
+            child_height >= 26 && child_height <= 30;
+        portrait |= child_x >= 38 && child_x <= 42 &&
+            child_y >= 25 && child_y <= 29 &&
+            child_width >= 98 && child_width <= 102 &&
+            child_height >= 118 && child_height <= 122;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited >= 20 && action_buttons == 2 && portrait;
+}
+
 bool IsEventPublicationPanel(void* object, void* parent,
                              int width, int height) {
     // Publication events and award shortlists use the only 509/510x350
@@ -1289,6 +1398,12 @@ thread_local bool g_scaling_announcement_subtree = false;
 TitleNativeGeometry g_artist_profile_geometry[512]{};
 size_t g_artist_profile_geometry_count = 0;
 void* g_artist_profile_root = nullptr;
+TitleNativeGeometry g_artist_contract_geometry[64]{};
+size_t g_artist_contract_geometry_count = 0;
+void* g_artist_contract_root = nullptr;
+TitleNativeGeometry g_artist_signing_geometry[128]{};
+size_t g_artist_signing_geometry_count = 0;
+void* g_artist_signing_root = nullptr;
 
 struct ArtistRadarVertexCache {
     float x[7][4]{};
@@ -1453,6 +1568,118 @@ void ScaleArtistProfileSubtree(void* object, int depth = 0) {
         void* next = *reinterpret_cast<void**>(
             static_cast<unsigned char*>(child) + 0xF8);
         ScaleArtistProfileSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetArtistContractGeometry(void* root) {
+    if (g_artist_contract_root == root) {
+        return;
+    }
+    g_artist_contract_root = root;
+    g_artist_contract_geometry_count = 0;
+}
+
+bool IsArtistContractDescendant(void* object) {
+    return IsDescendantOf(object, g_artist_contract_root);
+}
+
+void ScaleArtistContractSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetArtistContractGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_artist_contract_geometry,
+            std::size(g_artist_contract_geometry),
+            g_artist_contract_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 64) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleArtistContractSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetArtistSigningGeometry(void* root) {
+    if (g_artist_signing_root == root) {
+        return;
+    }
+    g_artist_signing_root = root;
+    g_artist_signing_geometry_count = 0;
+}
+
+bool IsArtistSigningDescendant(void* object) {
+    return IsDescendantOf(object, g_artist_signing_root);
+}
+
+void ScaleArtistSigningSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetArtistSigningGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_artist_signing_geometry,
+            std::size(g_artist_signing_geometry),
+            g_artist_signing_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 128) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleArtistSigningSubtree(child, depth + 1);
         child = next;
     }
 }
@@ -2510,6 +2737,40 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             Log("Unified UI artist profile aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
+        } else if (child == g_artist_contract_root) {
+            ScaleArtistContractSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (IsArtistContractPage(child, root, width, height)) {
+            ResetArtistContractGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleArtistContractSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI artist contract aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (child == g_artist_signing_root) {
+            ScaleArtistSigningSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (IsArtistSigningPage(child, root, width, height)) {
+            ResetArtistSigningGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleArtistSigningSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
         } else if (child == g_announcement_root &&
                    IsCachedAnnouncementRootValid()) {
             ScaleAnnouncementSubtree(child);
@@ -3075,6 +3336,82 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             g_artist_profile_geometry,
             std::size(g_artist_profile_geometry),
             g_artist_profile_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_artist_contract_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsArtistContractDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_artist_contract_geometry,
+            std::size(g_artist_contract_geometry),
+            g_artist_contract_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_artist_signing_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsArtistSigningDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_artist_signing_geometry,
+            std::size(g_artist_signing_geometry),
+            g_artist_signing_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
                 MulDiv(native->width, viewport_width, 800);
