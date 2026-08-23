@@ -402,113 +402,6 @@ bool IsPretransformedUI(IDirect3DDevice9* device, DWORD* fvf_out) {
     return (fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW;
 }
 
-bool TransformPhotoAlbumCGRawVertices(void* vertices, UINT vertex_count,
-                                      UINT stride) {
-    if (!vertices || vertex_count == 0 || stride < sizeof(float) * 4 ||
-        !IsPhotoAlbumCGVisible()) {
-        return false;
-    }
-
-    auto* bytes = static_cast<unsigned char*>(vertices);
-    float min_x = FLT_MAX;
-    float min_y = FLT_MAX;
-    float max_x = -FLT_MAX;
-    float max_y = -FLT_MAX;
-    for (UINT i = 0; i < vertex_count; ++i) {
-        const auto* position = reinterpret_cast<const float*>(
-            bytes + static_cast<size_t>(i) * stride);
-        min_x = std::min(min_x, position[0]);
-        min_y = std::min(min_y, position[1]);
-        max_x = std::max(max_x, position[0]);
-        max_y = std::max(max_y, position[1]);
-    }
-    // Only late legacy-space overlays need conversion. Album content already
-    // expressed in the active aspect-fit viewport must remain untouched.
-    if (min_x < -2.0f || min_y < -2.0f ||
-        max_x > 802.0f || max_y > 602.0f) {
-        return false;
-    }
-
-    // Keep the caption layer at its authored 800x600 size. It is independent
-    // from the enlarged CG image, so scaling its panel and glyphs makes the
-    // typography look stretched. Center the complete legacy overlay canvas
-    // instead, preserving every relative position and pixel dimension.
-    const int overlay_x =
-        (static_cast<int>(g_device_hook.width) - 800) / 2;
-    const int overlay_y =
-        (static_cast<int>(g_device_hook.height) - 600) / 2;
-    for (UINT i = 0; i < vertex_count; ++i) {
-        auto* position = reinterpret_cast<float*>(
-            bytes + static_cast<size_t>(i) * stride);
-        position[0] += static_cast<float>(overlay_x);
-        position[1] += static_cast<float>(overlay_y);
-    }
-
-    static volatile LONG cg_draw_logs = 0;
-    const LONG log_index = InterlockedIncrement(&cg_draw_logs);
-    if (log_index <= 24) {
-        Log("Photo album CG native overlay #%ld bounds=%.1f,%.1f..%.1f,%.1f offset=%d,%d",
-            log_index, min_x, min_y, max_x, max_y,
-            overlay_x, overlay_y);
-    }
-    return true;
-}
-
-bool DrawPhotoAlbumCGRawPrimitive(IDirect3DDevice9* device,
-                                  D3DPRIMITIVETYPE type,
-                                  UINT start_vertex,
-                                  UINT primitive_count,
-                                  HRESULT& result) {
-    if (!g_device_hook.active_target_is_main ||
-        !g_device_hook.original_draw_primitive_up ||
-        !IsPretransformedUI(device, nullptr) ||
-        !IsPhotoAlbumCGVisible()) {
-        return false;
-    }
-    const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
-    if (vertex_count == 0 || vertex_count > 16384) {
-        return false;
-    }
-
-    IDirect3DVertexBuffer9* buffer = nullptr;
-    UINT stream_offset = 0;
-    UINT stride = 0;
-    if (FAILED(device->GetStreamSource(0, &buffer, &stream_offset, &stride)) ||
-        !buffer || stride < sizeof(float) * 4) {
-        if (buffer) {
-            buffer->Release();
-        }
-        return false;
-    }
-    const size_t byte_offset = static_cast<size_t>(stream_offset) +
-        static_cast<size_t>(start_vertex) * stride;
-    const size_t byte_count = static_cast<size_t>(vertex_count) * stride;
-    D3DVERTEXBUFFER_DESC desc{};
-    void* source = nullptr;
-    if (FAILED(buffer->GetDesc(&desc)) || byte_offset > desc.Size ||
-        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
-        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
-                            static_cast<UINT>(byte_count), &source,
-                            D3DLOCK_READONLY))) {
-        buffer->Release();
-        return false;
-    }
-
-    std::vector<unsigned char> transformed(byte_count);
-    std::memcpy(transformed.data(), source, byte_count);
-    buffer->Unlock();
-    if (!TransformPhotoAlbumCGRawVertices(
-            transformed.data(), vertex_count, stride)) {
-        buffer->Release();
-        return false;
-    }
-    result = g_device_hook.original_draw_primitive_up(
-        device, type, primitive_count, transformed.data(), stride);
-    device->SetStreamSource(0, buffer, stream_offset, stride);
-    buffer->Release();
-    return true;
-}
-
 void LogUIDraw(IDirect3DDevice9* device, const char* method, D3DPRIMITIVETYPE type,
                UINT primitive_count, const void* vertices, UINT vertex_count, UINT stride) {
     DWORD fvf = 0;
@@ -1095,10 +988,6 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
         ClearInGameCGPillarboxBeforePrimitive(
             device, type, start_vertex, primitive_count);
         HRESULT shifted_result = D3D_OK;
-        if (DrawPhotoAlbumCGRawPrimitive(device, type, start_vertex,
-                                         primitive_count, shifted_result)) {
-            return shifted_result;
-        }
         if (DrawShiftedAnnouncementPrimitive(device, type, start_vertex,
                                              primitive_count, shifted_result)) {
             return shifted_result;
@@ -1171,20 +1060,6 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
     UpdateScheduleDateHover(device);
     UpdatePhotoAlbumViewport(device);
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive_up) {
-        const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
-        if (IsPretransformedUI(device, nullptr) && IsPhotoAlbumCGVisible() &&
-            vertices && vertex_count > 0 && vertex_count <= 16384) {
-            const size_t byte_count =
-                static_cast<size_t>(vertex_count) * stride;
-            std::vector<unsigned char> transformed(byte_count);
-            std::memcpy(transformed.data(), vertices, byte_count);
-            if (TransformPhotoAlbumCGRawVertices(
-                    transformed.data(), vertex_count, stride)) {
-                return g_device_hook.original_draw_primitive_up(
-                    device, type, primitive_count,
-                    transformed.data(), stride);
-            }
-        }
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
                       PrimitiveVertexCount(type, primitive_count), stride);

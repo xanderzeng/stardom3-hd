@@ -71,7 +71,6 @@ struct LayoutContext {
     struct ToolbarAnimationSequence {
         void* object = nullptr;
         bool active = false;
-        bool legacy_space = false;
         int source_start_x = 0;
         int target_width = 320;
         bool last_open = false;
