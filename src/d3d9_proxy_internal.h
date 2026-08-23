@@ -38,6 +38,7 @@ bool IsInGameCGVisible();
 bool IsAnnouncementScreenVisible();
 bool IsTrainingScreenPillarboxNeeded();
 bool IsStudioEventListScreenVisible();
+bool GetLoadingScreenRect(RECT& rect);
 bool IsTitleScreenVisible();
 bool IsTitleTutorialVisible();
 

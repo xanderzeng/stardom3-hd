@@ -835,6 +835,52 @@ bool IsEventPublicationCover(void* object, void* parent,
 void* g_publication_cover = nullptr;
 void* g_awards_ceremony_root = nullptr;
 bool g_awards_ceremony_logged = false;
+void* g_loading_page_root = nullptr;
+
+struct LoadingPageSignature {
+    bool top_badge = false;
+    bool central_art = false;
+    bool bottom_progress = false;
+    size_t visited = 0;
+};
+
+void ScanLoadingPageSignature(void* parent, int origin_x, int origin_y,
+                              int depth, LoadingPageSignature& signature) {
+    if (!CanReadGuiObject(parent) || depth > 2 || signature.visited >= 128) {
+        return;
+    }
+    auto* parent_bytes = static_cast<unsigned char*>(parent);
+    void* child = *reinterpret_cast<void**>(parent_bytes + 0xF4);
+    while (CanReadGuiObject(child) && signature.visited++ < 128) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int x = origin_x + *reinterpret_cast<int*>(bytes + 0x80);
+        const int y = origin_y + *reinterpret_cast<int*>(bytes + 0x84);
+        const int width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        signature.top_badge = signature.top_badge ||
+            (x >= 240 && x <= 500 && y >= 0 && y <= 170 &&
+             width >= 80 && width <= 280 && height >= 20 && height <= 150);
+        signature.central_art = signature.central_art ||
+            (x >= 140 && x <= 420 && y >= 100 && y <= 390 &&
+             width >= 220 && width <= 460 && height >= 140 && height <= 340);
+        signature.bottom_progress = signature.bottom_progress ||
+            (x >= -10 && x <= 120 && y >= 490 && y <= 610 &&
+             width >= 560 && width <= 820 && height >= 8 && height <= 100);
+        ScanLoadingPageSignature(child, x, y, depth + 1, signature);
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+}
+
+bool IsLoadingPageRoot(void* object, void* parent, int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 804 || height < 598 || height > 604) {
+        return false;
+    }
+    LoadingPageSignature signature;
+    ScanLoadingPageSignature(object, 0, 0, 0, signature);
+    return signature.top_badge && signature.central_art &&
+        signature.bottom_progress;
+}
 
 bool IsScheduleSecondaryPanel(void* object, void* parent,
                               int width, int height) {
@@ -1432,6 +1478,25 @@ bool IsTitleScreenVisible() {
     }
     return *(static_cast<unsigned char*>(g_unified_ui.title_screen_root) +
         0x99) != 0;
+}
+
+bool GetLoadingScreenRect(RECT& rect) {
+    if (!CanReadGuiObject(g_loading_page_root)) {
+        g_loading_page_root = nullptr;
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(g_loading_page_root);
+    void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
+    const int x = *reinterpret_cast<int*>(bytes + 0x80);
+    const int y = *reinterpret_cast<int*>(bytes + 0x84);
+    const int width = *reinterpret_cast<int*>(bytes + 0x88);
+    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+    if (parent != g_unified_ui.primary_root || *(bytes + 0x99) == 0 ||
+        width < 798 || width > 804 || height < 598 || height > 604) {
+        return false;
+    }
+    rect = RECT{x, y, x + width, y + height};
+    return true;
 }
 
 bool IsTitleTutorialVisible() {
@@ -3585,6 +3650,12 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
         int& y = *reinterpret_cast<int*>(child_bytes + 0x84);
         int& width = *reinterpret_cast<int*>(child_bytes + 0x88);
         int& height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        if (IsLoadingPageRoot(child, root, width, height) &&
+            g_loading_page_root != child) {
+            g_loading_page_root = child;
+            Log("Unified UI loading page discovered self=%p rect=%d,%d %dx%d",
+                child, x, y, width, height);
+        }
         const bool legacy_canvas = width >= 790 && width <= 810 &&
             height >= 590 && height <= 610;
         const bool known_canvas = IsKnownLayoutRoot(child);
@@ -4816,6 +4887,13 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         const bool legacy_root = parent_width >= 790 && parent_width <= 810 &&
             parent_height >= 590 && parent_height <= 610;
         void* grandparent = *reinterpret_cast<void**>(parent_bytes + 0xF0);
+        if (IsLoadingPageRoot(parent, grandparent,
+                              parent_width, parent_height) &&
+            g_loading_page_root != parent) {
+            g_loading_page_root = parent;
+            Log("Unified UI loading page discovered during construction self=%p",
+                parent);
+        }
         const bool primary_legacy_root = legacy_root && grandparent == nullptr;
         if (primary_legacy_root) {
             RememberLayoutRoot(parent);

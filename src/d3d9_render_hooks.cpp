@@ -216,6 +216,7 @@ HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
         g_device_hook.original_begin_scene) {
         g_device_hook.title_pillarbox_cleared = false;
         g_device_hook.training_pillarbox_cleared = false;
+        g_device_hook.loading_background_cleared = false;
         g_device_hook.title_ready_before_draw = IsTitleScreenVisible();
         return g_device_hook.original_begin_scene(device);
     }
@@ -602,11 +603,13 @@ struct TitleScreenClipState {
 
 TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     TitleScreenClipState state;
+    RECT loading_rect{};
+    const bool loading_page = GetLoadingScreenRect(loading_rect);
     const bool title_page =
         IsTitleScreenVisible() || IsTitleTutorialVisible();
     const bool studio_event_list = IsStudioEventListScreenVisible();
     if (!device || !g_device_hook.active_target_is_main ||
-        (!title_page && !studio_event_list)) {
+        (!loading_page && !title_page && !studio_event_list)) {
         return state;
     }
 
@@ -616,13 +619,24 @@ TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     int viewport_height = 0;
     GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
         viewport_x, viewport_y, viewport_width, viewport_height);
-    RECT title_rect{
-        viewport_x,
-        viewport_y,
-        viewport_x + viewport_width,
-        viewport_y + viewport_height,
-    };
-    if (!g_device_hook.title_pillarbox_cleared) {
+    RECT title_rect = loading_page ? loading_rect : RECT{
+        viewport_x, viewport_y,
+        viewport_x + viewport_width, viewport_y + viewport_height};
+    if (loading_page && !g_device_hook.loading_background_cleared) {
+        if (SUCCEEDED(device->Clear(
+                0, nullptr, D3DCLEAR_TARGET,
+                D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
+            g_device_hook.loading_background_cleared = true;
+            if (!g_device_hook.loading_background_logged) {
+                Log("Loading page output background cleared behind %ld,%ld %ldx%ld",
+                    loading_rect.left, loading_rect.top,
+                    loading_rect.right - loading_rect.left,
+                    loading_rect.bottom - loading_rect.top);
+                g_device_hook.loading_background_logged = true;
+            }
+        }
+    }
+    if (!loading_page && !g_device_hook.title_pillarbox_cleared) {
         D3DRECT bars[4]{};
         DWORD bar_count = 0;
         if (viewport_x > 0) {

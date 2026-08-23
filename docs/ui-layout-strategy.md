@@ -123,6 +123,13 @@ approximately 802x602, and has no descendants. This leaf surface is resized to
 the complete output resolution. Legacy pages with child controls keep their
 native 800x600 size and centered placement.
 
+The map and save-load progress page is a different 800x600 control tree. Its
+top status badge, central artwork and bottom progress strip identify it without
+matching ordinary legacy pages. While that page is visible, rendering outside
+its centered rectangle is clipped and the complete output is cleared to black
+before the page is drawn. This preserves the authored loading artwork while
+preventing the previous 3D scene and HUD from showing around it.
+
 The title screen is recognized by its seven 100x100 menu buttons, version
 label, paired 800x600 background layers, and paired animated middle strips.
 It is uniformly enlarged into the same centered 4:3 viewport used by other
