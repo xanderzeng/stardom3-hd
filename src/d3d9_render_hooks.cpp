@@ -602,8 +602,11 @@ struct TitleScreenClipState {
 
 TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     TitleScreenClipState state;
+    const bool title_page =
+        IsTitleScreenVisible() || IsTitleTutorialVisible();
+    const bool studio_event_list = IsStudioEventListScreenVisible();
     if (!device || !g_device_hook.active_target_is_main ||
-        (!IsTitleScreenVisible() && !IsTitleTutorialVisible())) {
+        (!title_page && !studio_event_list)) {
         return state;
     }
 
@@ -649,7 +652,7 @@ TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
                 D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
             g_device_hook.title_pillarbox_cleared = true;
             if (!g_device_hook.title_pillarbox_logged) {
-                Log("Title screen pillarbox cleared around %d,%d %dx%d",
+                Log("Aspect-fit page pillarbox cleared around %d,%d %dx%d",
                     viewport_x, viewport_y, viewport_width, viewport_height);
                 g_device_hook.title_pillarbox_logged = true;
             }

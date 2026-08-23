@@ -235,6 +235,34 @@ single 434x410 panel, 100x120 portrait, and paired 98x28 decision buttons. The
 dossier subtree is aspect-fitted with its labels and hit rectangles, while the
 full-height character cut-in remains at its authored size as a separate root.
 
+The large-studio event manager is a direct-root 800x600 editor page. It is
+identified by its 760x567 ground panel, ten 480x20 event rows, 92x32 exit
+button, and 28x226 scroll track. The complete page hierarchy is fitted as one
+layout group so row buttons, pagination, scroll controls, labels, and their
+hit rectangles retain the authored relationships. Runtime row arrangement is
+kept controller-driven; maintenance passes do not replay the resource-template
+positions over the visible list. While the page is visible, drawing is clipped
+to the fitted viewport and the uncovered output regions are cleared to black
+rather than exposing the renderer's blue clear colour.
+
+The event editor is a separate direct-root 800x600 `EventUnit` overlay rather
+than a child of the event list. It is identified by its 760x577 panel, paired
+700x190 dialogue sections, and five 98x28 bottom action buttons, then fitted to
+the same viewport. Its controller remains responsible for live selection and
+edit-control movement; only new coordinates are transformed after discovery,
+so opening dropdowns or editing event units does not restore template slots.
+The five-row `Editor/SelectList` controls are detached direct-root overlays as
+well. All five pre-created width variants retain independent geometry caches;
+their game-supplied native anchors, popup frames, option rows, arrows and hit
+rectangles receive the editor's aspect-fit transform together. If a popup was
+centered before its children finished construction, its native anchor is
+recovered only when the stored position actually contains both canvas offsets,
+so hidden controls initialized at `(0,0)` are not converted to negative space.
+Because the tutorial and editor reuse both the seven-child resource shape and
+pooled object addresses, a currently visible tutorial root takes precedence
+over every retained editor-dropdown record. Tutorial birthday selectors thus
+keep their centered native size and placement when revisiting character setup.
+
 Training selection already uses the expanded 800x600 page viewport, but each
 activity launches a separate 426x369 minigame frame. The frame is recognized
 by its 215x32 timer, 426x333 full-frame layer, and 400x230 play surface. Its

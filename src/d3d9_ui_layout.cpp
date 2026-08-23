@@ -266,7 +266,11 @@ extern void* g_title_tutorial_root;
 
 bool HasTitleTutorialPage() {
     if (CanReadGuiObject(g_title_tutorial_root)) {
-        return true;
+        auto* bytes = static_cast<unsigned char*>(g_title_tutorial_root);
+        if (*reinterpret_cast<void**>(bytes + 0xF0) ==
+                g_unified_ui.primary_root && *(bytes + 0x99) != 0) {
+            return true;
+        }
     }
     if (!CanReadGuiObject(g_unified_ui.primary_root)) {
         return false;
@@ -308,6 +312,53 @@ bool IsTitleTutorialProfileDropdown(void* object, void* parent,
     // direct-root overlays positioned in the tutorial's original 800x600
     // coordinates, so they must follow the centered legacy canvas rather
     // than the generic bottom-edge anchoring rule.
+    int rows = 0;
+    int arrows = 0;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 8) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        rows += child_x >= 3 && child_x <= 7 &&
+            child_y >= 3 && child_y <= 107 &&
+            child_width >= width - 33 && child_width <= width - 29 &&
+            child_height >= 23 && child_height <= 27;
+        arrows += child_x >= width - 24 && child_x <= width - 20 &&
+            (child_y >= 1 && child_y <= 5 ||
+             child_y >= 101 && child_y <= 105) &&
+            child_width >= 17 && child_width <= 21 &&
+            child_height >= 27 && child_height <= 31;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return visited == 7 && rows == 5 && arrows == 2;
+}
+
+extern void* g_studio_event_editor_root;
+
+bool HasStudioEventEditorPage() {
+    if (!CanReadGuiObject(g_studio_event_editor_root)) {
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(g_studio_event_editor_root);
+    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+            g_unified_ui.primary_root && *(bytes + 0x99) != 0;
+}
+
+bool IsStudioEventEditorDropdown(void* object, void* parent,
+                                 int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 58 || width > 172 || height < 133 || height > 137 ||
+        HasTitleTutorialPage() || !HasStudioEventEditorPage()) {
+        return false;
+    }
+
+    // Editor/SelectList*.txt uses the same detached seven-child popup family
+    // for year, month, location, condition and participant selectors. Width
+    // varies from 60 to 170, while all variants keep five rows and two arrows.
     int rows = 0;
     int arrows = 0;
     void* child = *reinterpret_cast<void**>(
@@ -525,6 +576,129 @@ bool IsArtistSigningPage(void* object, void* parent,
         child = *reinterpret_cast<void**>(bytes + 0xF8);
     }
     return visited >= 20 && action_buttons == 2 && portrait;
+}
+
+bool IsStudioEventListPage(void* object, void* parent,
+                           int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // EventList.txt owns a 760x567 ground panel containing ten event rows,
+    // one exit button and the vertical scroll track. Match that full group so
+    // other legacy editor pages keep their existing centred-page behaviour.
+    void* ground = nullptr;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t root_children = 0;
+    while (CanReadGuiObject(child) && root_children++ < 8) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        if (child_x >= 18 && child_x <= 22 &&
+            child_y >= 9 && child_y <= 13 &&
+            child_width >= 758 && child_width <= 762 &&
+            child_height >= 565 && child_height <= 569) {
+            ground = child;
+        }
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    if (!CanReadGuiObject(ground)) {
+        return false;
+    }
+
+    int event_rows = 0;
+    bool exit_button = false;
+    bool scroll_track = false;
+    child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(ground) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 256) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        event_rows += child_x >= 224 && child_x <= 228 &&
+            child_y >= 83 && child_y <= 447 &&
+            child_width >= 478 && child_width <= 482 &&
+            child_height >= 18 && child_height <= 22;
+        exit_button |= child_x >= 625 && child_x <= 629 &&
+            child_y >= 518 && child_y <= 522 &&
+            child_width >= 90 && child_width <= 94 &&
+            child_height >= 30 && child_height <= 34;
+        scroll_track |= child_x >= 708 && child_x <= 712 &&
+            child_y >= 162 && child_y <= 166 &&
+            child_width >= 26 && child_width <= 30 &&
+            child_height >= 224 && child_height <= 228;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return event_rows == 10 && exit_button && scroll_track;
+}
+
+bool IsStudioEventEditorPage(void* object, void* parent,
+                             int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // EventUnit.txt owns a 760x577 editor panel with two 700x190 dialogue
+    // sections and five 98x28 action buttons along its bottom edge. Match the
+    // complete authored group instead of treating every legacy editor page as
+    // an event editor.
+    void* panel = nullptr;
+    void* child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(object) + 0xF4);
+    size_t root_children = 0;
+    while (CanReadGuiObject(child) && root_children++ < 8) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        if (child_x >= 18 && child_x <= 22 &&
+            child_y >= 9 && child_y <= 13 &&
+            child_width >= 758 && child_width <= 762 &&
+            child_height >= 575 && child_height <= 579) {
+            panel = child;
+        }
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    if (!CanReadGuiObject(panel)) {
+        return false;
+    }
+
+    bool first_dialogue = false;
+    bool second_dialogue = false;
+    int action_buttons = 0;
+    child = *reinterpret_cast<void**>(
+        static_cast<unsigned char*>(panel) + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 512) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
+        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
+        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
+        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        first_dialogue |= child_x >= -2 && child_x <= 2 &&
+            child_y >= 148 && child_y <= 152 &&
+            child_width >= 698 && child_width <= 702 &&
+            child_height >= 188 && child_height <= 192;
+        second_dialogue |= child_x >= -2 && child_x <= 2 &&
+            child_y >= 338 && child_y <= 342 &&
+            child_width >= 698 && child_width <= 702 &&
+            child_height >= 188 && child_height <= 192;
+        action_buttons += child_x >= 183 && child_x <= 623 &&
+            child_y >= 531 && child_y <= 535 &&
+            child_width >= 96 && child_width <= 100 &&
+            child_height >= 26 && child_height <= 30;
+        child = *reinterpret_cast<void**>(bytes + 0xF8);
+    }
+    return first_dialogue && second_dialogue && action_buttons == 5;
 }
 
 bool IsTrainingMinigamePanel(void* object, void* parent,
@@ -1452,6 +1626,23 @@ void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
 size_t g_artist_signing_geometry_count = 0;
 void* g_artist_signing_root = nullptr;
+TitleNativeGeometry g_studio_event_list_geometry[1024]{};
+size_t g_studio_event_list_geometry_count = 0;
+void* g_studio_event_list_root = nullptr;
+TitleNativeGeometry g_studio_event_editor_geometry[2048]{};
+size_t g_studio_event_editor_geometry_count = 0;
+void* g_studio_event_editor_root = nullptr;
+struct StudioEventDropdownLayout {
+    void* root = nullptr;
+    TitleNativeGeometry geometry[16]{};
+    size_t geometry_count = 0;
+    int native_width = 0;
+    int native_height = 0;
+    bool tutorial_mode = false;
+};
+
+StudioEventDropdownLayout g_studio_event_dropdowns[8]{};
+size_t g_studio_event_dropdown_count = 0;
 TitleNativeGeometry g_training_minigame_geometry[64]{};
 size_t g_training_minigame_geometry_count = 0;
 void* g_training_minigame_root = nullptr;
@@ -1735,6 +1926,252 @@ void ScaleArtistSigningSubtree(void* object, int depth = 0) {
         void* next = *reinterpret_cast<void**>(
             static_cast<unsigned char*>(child) + 0xF8);
         ScaleArtistSigningSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetStudioEventListGeometry(void* root) {
+    if (g_studio_event_list_root == root) {
+        return;
+    }
+    g_studio_event_list_root = root;
+    g_studio_event_list_geometry_count = 0;
+}
+
+bool IsStudioEventListDescendant(void* object) {
+    return IsDescendantOf(object, g_studio_event_list_root, 8);
+}
+
+void ScaleStudioEventListSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetStudioEventListGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_studio_event_list_geometry,
+            std::size(g_studio_event_list_geometry),
+            g_studio_event_list_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 2048) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleStudioEventListSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetStudioEventEditorGeometry(void* root) {
+    if (g_studio_event_editor_root == root) {
+        return;
+    }
+    g_studio_event_editor_root = root;
+    g_studio_event_editor_geometry_count = 0;
+}
+
+bool IsStudioEventEditorDescendant(void* object) {
+    return IsDescendantOf(object, g_studio_event_editor_root, 8);
+}
+
+void ScaleStudioEventEditorSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetStudioEventEditorGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_studio_event_editor_geometry,
+            std::size(g_studio_event_editor_geometry),
+            g_studio_event_editor_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 4096) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleStudioEventEditorSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+StudioEventDropdownLayout* FindStudioEventDropdownLayout(void* root) {
+    for (size_t i = 0; i < g_studio_event_dropdown_count; ++i) {
+        if (g_studio_event_dropdowns[i].root == root) {
+            return &g_studio_event_dropdowns[i];
+        }
+    }
+    return nullptr;
+}
+
+StudioEventDropdownLayout* RegisterStudioEventDropdownLayout(
+        void* root, int native_width, int native_height) {
+    StudioEventDropdownLayout* layout =
+        FindStudioEventDropdownLayout(root);
+    if (!layout) {
+        if (g_studio_event_dropdown_count >=
+            std::size(g_studio_event_dropdowns)) {
+            return nullptr;
+        }
+        layout = &g_studio_event_dropdowns[
+            g_studio_event_dropdown_count++];
+        *layout = {};
+        layout->root = root;
+    } else {
+        // GUI pools can reuse the same addresses when returning to the editor.
+        // A native-sized signature means the resource has been reconstructed,
+        // so discard child geometry retained from its previous lifetime.
+        layout->geometry_count = 0;
+    }
+    layout->native_width = native_width;
+    layout->native_height = native_height;
+    layout->tutorial_mode = false;
+    return layout;
+}
+
+StudioEventDropdownLayout* FindStudioEventDropdownOwner(void* object) {
+    for (size_t i = 0; i < g_studio_event_dropdown_count; ++i) {
+        StudioEventDropdownLayout& layout = g_studio_event_dropdowns[i];
+        if (object == layout.root ||
+            IsDescendantOf(object, layout.root, 2)) {
+            return &layout;
+        }
+    }
+    return nullptr;
+}
+
+bool IsTitleTutorialDropdownAnchor(int x, int y) {
+    const bool birthday =
+        (std::abs(x - 268) <= 4 || std::abs(x - 359) <= 4) &&
+        std::abs(y - 434) <= 4;
+    const bool blood_type = std::abs(x - 550) <= 4 &&
+        std::abs(y - 405) <= 4;
+    return birthday || blood_type;
+}
+
+void RestoreTitleTutorialDropdown(
+        StudioEventDropdownLayout& layout, int native_x, int native_y) {
+    if (!CanReadGuiObject(layout.root) || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    for (size_t i = 0; i < layout.geometry_count; ++i) {
+        TitleNativeGeometry& native = layout.geometry[i];
+        if (!CanReadGuiObject(native.object)) {
+            continue;
+        }
+        auto* bytes = static_cast<unsigned char*>(native.object);
+        *reinterpret_cast<int*>(bytes + 0x88) = native.width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = native.height;
+        original(native.object, native.x, native.y);
+    }
+    auto* root_bytes = static_cast<unsigned char*>(layout.root);
+    *reinterpret_cast<int*>(root_bytes + 0x88) = layout.native_width;
+    *reinterpret_cast<int*>(root_bytes + 0x8C) = layout.native_height;
+    original(layout.root,
+        native_x + (static_cast<int>(g_unified_ui.width) -
+            LegacyCanvas::width) / 2,
+        native_y + (static_cast<int>(g_unified_ui.height) -
+            LegacyCanvas::height) / 2);
+    layout.tutorial_mode = true;
+    RememberProcessedLayoutObject(layout.root);
+}
+
+void ScaleStudioEventDropdownSubtree(void* object,
+                                     StudioEventDropdownLayout& layout,
+                                     int native_root_x,
+                                     int native_root_y,
+                                     int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 2 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto* bytes = static_cast<unsigned char*>(object);
+    int& width = *reinterpret_cast<int*>(bytes + 0x88);
+    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        width = MulDiv(layout.native_width,
+            viewport_width, 800);
+        height = MulDiv(layout.native_height,
+            viewport_height, 600);
+        original(object,
+            viewport_x + MulDiv(native_root_x, viewport_width, 800),
+            viewport_y + MulDiv(native_root_y, viewport_height, 600));
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            layout.geometry,
+            std::size(layout.geometry),
+            layout.geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, 800);
+            height = MulDiv(native->height, viewport_height, 600);
+            original(object,
+                MulDiv(native->x, viewport_width, 800),
+                MulDiv(native->y, viewport_height, 600));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        void* next = *reinterpret_cast<void**>(
+            static_cast<unsigned char*>(child) + 0xF8);
+        ScaleStudioEventDropdownSubtree(
+            child, layout, native_root_x, native_root_y, depth + 1);
         child = next;
     }
 }
@@ -2657,6 +3094,15 @@ bool IsTrainingScreenPillarboxNeeded() {
         g_unified_ui.primary_root;
 }
 
+bool IsStudioEventListScreenVisible() {
+    if (!CanReadGuiObject(g_studio_event_list_root)) {
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(g_studio_event_list_root);
+    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+            g_unified_ui.primary_root && *(bytes + 0x99) != 0;
+}
+
 bool IsPhoneOverlayRoot(void* object, void* parent,
                         int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -3029,6 +3475,48 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
+        } else if (child == g_studio_event_list_root) {
+            // EventList's controller rearranges the "new" unit button and
+            // other row controls after construction. Replaying the cached
+            // resource tree during the one-second maintenance pass restores
+            // their template slots (for example column 5) and corrupts the
+            // visible list. Initial discovery performs the full fit;
+            // HookGuiMove scales subsequent controller-driven positions.
+            RememberProcessedLayoutObject(child);
+        } else if (IsStudioEventListPage(child, root, width, height)) {
+            ResetStudioEventListGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleStudioEventListSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI studio event list aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (child == g_studio_event_editor_root) {
+            // EventUnit contains controller-managed selections and edit
+            // controls. Initial discovery fits the resource tree; later
+            // controller movement is transformed by HookGuiMove without
+            // replaying stale cached positions during maintenance.
+            RememberProcessedLayoutObject(child);
+        } else if (IsStudioEventEditorPage(child, root, width, height)) {
+            ResetStudioEventEditorGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleStudioEventEditorSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI studio event editor aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
         } else if (child == g_training_minigame_root) {
             // The progress control interpolates its marker internally. Do not
             // replay Move across the complete subtree during the one-second
@@ -3282,6 +3770,45 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     child, old_x, old_y, old_width, old_height,
                     x, y, width, height);
             }
+        } else if (StudioEventDropdownLayout* layout =
+                       FindStudioEventDropdownLayout(child);
+                   layout && layout->tutorial_mode) {
+            // The GUI pool retains editor dropdown addresses. Once an object
+            // is reused by character setup, keep its restored native geometry
+            // out of editor discovery and maintenance scaling.
+            RememberProcessedLayoutObject(child);
+        } else if (IsStudioEventEditorDropdown(
+                       child, root, width, height)) {
+            int native_x = x;
+            int native_y = y;
+            const int center_x =
+                (static_cast<int>(g_unified_ui.width) -
+                 LegacyCanvas::width) / 2;
+            const int center_y =
+                (static_cast<int>(g_unified_ui.height) -
+                 LegacyCanvas::height) / 2;
+            if (IsProcessedLayoutObject(child) &&
+                x >= center_x && y >= center_y) {
+                // The generic legacy path may have centered the transient
+                // popup before all seven children existed. Recover the game-
+                // supplied 800x600 coordinate before applying aspect fit.
+                native_x -= center_x;
+                native_y -= center_y;
+            }
+            StudioEventDropdownLayout* layout =
+                RegisterStudioEventDropdownLayout(child, width, height);
+            if (layout) {
+                ScaleStudioEventDropdownSubtree(
+                    child, *layout, native_x, native_y);
+            }
+            Log("Unified UI studio event dropdown aspect-fit self=%p rect=%d,%d %dx%d",
+                child, native_x, native_y, width, height);
+        } else if (!HasTitleTutorialPage() &&
+                   FindStudioEventDropdownLayout(child)) {
+            // The popup is transient but remains controller-positioned while
+            // open. HookGuiMove handles new coordinates without replaying its
+            // initial selection state during maintenance.
+            RememberProcessedLayoutObject(child);
         } else if (IsTitleTutorialProfileDropdown(
                        child, root, width, height)) {
             TransformTitleTutorialProfileDropdown(child, x, y);
@@ -3744,6 +4271,82 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             return;
         }
     }
+    if (self == g_studio_event_list_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsStudioEventListDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_studio_event_list_geometry,
+            std::size(g_studio_event_list_geometry),
+            g_studio_event_list_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(x, viewport_width, 800),
+                MulDiv(y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_studio_event_editor_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsStudioEventEditorDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_studio_event_editor_geometry,
+            std::size(g_studio_event_editor_geometry),
+            g_studio_event_editor_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, 800);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, 600);
+            original(self,
+                MulDiv(x, viewport_width, 800),
+                MulDiv(y, viewport_height, 600));
+            return;
+        }
+    }
     if (self == g_training_minigame_root) {
         int viewport_x = 0;
         int viewport_y = 0;
@@ -4043,6 +4646,38 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             return;
         }
 
+        StudioEventDropdownLayout* dropdown_owner =
+            FindStudioEventDropdownOwner(self);
+        if (!HasTitleTutorialPage() && dropdown_owner &&
+            !dropdown_owner->tutorial_mode &&
+            self != dropdown_owner->root) {
+            if (IsRepeatedObjectPosition(self, x, y)) {
+                original(self, x, y);
+                return;
+            }
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width,
+                g_unified_ui.height, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+            TitleNativeGeometry* native = RememberGeometry(
+                dropdown_owner->geometry,
+                std::size(dropdown_owner->geometry),
+                dropdown_owner->geometry_count, self);
+            if (native) {
+                *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
+                    native->width, viewport_width, 800);
+                *reinterpret_cast<int*>(bytes + 0x8C) = MulDiv(
+                    native->height, viewport_height, 600);
+                original(self,
+                    MulDiv(x, viewport_width, 800),
+                    MulDiv(y, viewport_height, 600));
+                return;
+            }
+        }
+
         if (primary_legacy_root || IsKnownLayoutRoot(parent)) {
             if (parent == g_unified_ui.primary_root) {
                 ReflowExistingRootChildren(parent);
@@ -4121,8 +4756,60 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             } else if (IsSmallDialoguePortrait(self, parent, width, height)) {
                 PlaceCenteredLegacyOverlay(95, 403, x, y);
                 RememberProcessedLayoutObject(self);
+            } else if (IsStudioEventEditorDropdown(
+                           self, parent, width, height)) {
+                StudioEventDropdownLayout* layout =
+                    RegisterStudioEventDropdownLayout(
+                        self, width, height);
+                if (layout) {
+                    ScaleStudioEventDropdownSubtree(
+                        self, *layout, x, y);
+                    return;
+                }
+            } else if (StudioEventDropdownLayout* layout =
+                           FindStudioEventDropdownLayout(self);
+                       layout && IsTitleTutorialDropdownAnchor(x, y)) {
+                RestoreTitleTutorialDropdown(*layout, x, y);
+                Log("Unified UI title tutorial dropdown restored self=%p native=%d,%d size=%dx%d",
+                    self, x, y, layout->native_width,
+                    layout->native_height);
+                return;
+            } else if (!HasTitleTutorialPage() &&
+                       FindStudioEventDropdownLayout(self)) {
+                StudioEventDropdownLayout* layout =
+                    FindStudioEventDropdownLayout(self);
+                layout->tutorial_mode = false;
+                if (IsRepeatedObjectPosition(self, x, y)) {
+                    original(self, x, y);
+                    return;
+                }
+                int viewport_x = 0;
+                int viewport_y = 0;
+                int viewport_width = 0;
+                int viewport_height = 0;
+                GetPhotoAlbumViewport(g_unified_ui.width,
+                    g_unified_ui.height, viewport_x, viewport_y,
+                    viewport_width, viewport_height);
+                const int native_x = x;
+                const int native_y = y;
+                *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
+                    layout->native_width,
+                    viewport_width, 800);
+                *reinterpret_cast<int*>(bytes + 0x8C) = MulDiv(
+                    layout->native_height,
+                    viewport_height, 600);
+                x = viewport_x + MulDiv(x, viewport_width, 800);
+                y = viewport_y + MulDiv(y, viewport_height, 600);
+                RememberProcessedLayoutObject(self);
+                Log("Unified UI studio event dropdown move self=%p native=%d,%d -> %d,%d size=%dx%d",
+                    self, native_x, native_y, x, y,
+                    *reinterpret_cast<int*>(bytes + 0x88),
+                    *reinterpret_cast<int*>(bytes + 0x8C));
             } else if (IsTitleTutorialProfileDropdown(
                            self, parent, width, height)) {
+                // Tutorial selectors share the same pooled GUI objects as the
+                // editor. Their centered native layout takes precedence over
+                // any event-dropdown geometry retained at the same address.
                 TransformTitleTutorialProfileDropdown(self, x, y);
                 RememberProcessedLayoutObject(self);
             } else if (self == g_awards_ceremony_root) {
