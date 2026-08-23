@@ -901,9 +901,9 @@ bool IsInGameCGRoot(void* object, void* parent, int width, int height) {
 }
 
 bool IsInGameCGCaption(void* object, void* parent, int width, int height) {
-    // The story-CG narration bar is a separate direct-root 800x76 surface
-    // with one inset 780x60 text child. Keep the bar at native size while the
-    // image behind it is enlarged uniformly.
+    // Story-CG narration and ordinary status reminders share this direct-root
+    // 800x76 surface with one inset 780x60 text child. Match the structure,
+    // not the active scene, and keep the complete bar at native size.
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
         width < 798 || width > 802 || height < 72 || height > 80) {
         return false;
@@ -929,8 +929,10 @@ bool IsInGameCGCaption(void* object, void* parent, int width, int height) {
 
 bool IsInGameCGItemNotice(void* object, void* parent,
                           int width, int height) {
-    // Item acquisition during story CGs uses a separate 800x128 root. Its two
-    // children are the 380x60 memo and the 200x140 item illustration.
+    // Status reminders and item acquisition notices share this 800x128 root.
+    // Its two children are the 380x60 memo and the 200x140 character/item
+    // illustration. Match the structure rather than the current scene: the
+    // same control is also used over the ordinary 3D world.
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
         width < 798 || width > 802 || height < 122 || height > 134) {
         return false;
@@ -1084,26 +1086,31 @@ void DiscoverInGameCGSurfaces(void* root) {
     }
     if (visible_cg) {
         g_unified_ui.in_game_cg_root = visible_cg;
-        if (visible_caption) {
-            const bool new_caption =
-                visible_caption != g_unified_ui.in_game_cg_caption;
-            g_unified_ui.in_game_cg_caption = visible_caption;
-            if (new_caption) {
-                g_unified_ui.in_game_cg_caption_native_y = caption_native_y;
-                g_unified_ui.in_game_cg_caption_logged = false;
-            }
+    }
+    // The 800x76 bar is also used for status reminders over the ordinary 3D
+    // world, so retain it independently of the story-CG root.
+    if (visible_caption) {
+        const bool new_caption =
+            visible_caption != g_unified_ui.in_game_cg_caption;
+        g_unified_ui.in_game_cg_caption = visible_caption;
+        if (new_caption) {
+            g_unified_ui.in_game_cg_caption_native_y = caption_native_y;
+            g_unified_ui.in_game_cg_caption_logged = false;
         }
-        if (visible_item_notice) {
-            const bool new_notice =
-                visible_item_notice != g_unified_ui.in_game_cg_item_notice;
-            g_unified_ui.in_game_cg_item_notice = visible_item_notice;
-            if (new_notice) {
-                g_unified_ui.in_game_cg_item_notice_native_x =
-                    item_notice_native_x;
-                g_unified_ui.in_game_cg_item_notice_native_y =
-                    item_notice_native_y;
-                g_unified_ui.in_game_cg_item_notice_logged = false;
-            }
+    }
+    // The notice is shared by story CGs and ordinary world scenes. Retain it
+    // even when no CG root is visible so both contexts use the same native
+    // 800x600 translation.
+    if (visible_item_notice) {
+        const bool new_notice =
+            visible_item_notice != g_unified_ui.in_game_cg_item_notice;
+        g_unified_ui.in_game_cg_item_notice = visible_item_notice;
+        if (new_notice) {
+            g_unified_ui.in_game_cg_item_notice_native_x =
+                item_notice_native_x;
+            g_unified_ui.in_game_cg_item_notice_native_y =
+                item_notice_native_y;
+            g_unified_ui.in_game_cg_item_notice_logged = false;
         }
     }
 }
@@ -2598,29 +2605,7 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     viewport_width, viewport_height);
                 g_unified_ui.in_game_cg_logged = true;
             }
-        } else if (child == g_unified_ui.in_game_cg_caption &&
-                   IsInGameCGVisible()) {
-            int new_x = 0;
-            int new_y = 0;
-            GetInGameCGCaptionPosition(
-                g_unified_ui.in_game_cg_caption_native_y, new_x, new_y);
-            original(child, new_x, new_y);
-            RememberProcessedLayoutObject(child);
-            if (!g_unified_ui.in_game_cg_caption_logged) {
-                Log("Unified UI in-game CG native caption self=%p y=%d -> %d,%d",
-                    child, g_unified_ui.in_game_cg_caption_native_y,
-                    new_x, new_y);
-                g_unified_ui.in_game_cg_caption_logged = true;
-            }
-        } else if (IsPhotoAlbumCGVisible() &&
-                   IsInGameCGCaption(child, root, width, height)) {
-            // Album playback reuses the story-CG narration control without
-            // exposing the normal two-surface story-CG root. Identify the
-            // 800x76 bar by its inset 780x60 text child and center the complete
-            // native overlay. Leaving it at 0,342 makes the album viewport clip
-            // its left edge at lower resolutions (640 visible pixels at
-            // 1280x720), while shifting arbitrary raw draws also moves ordinary
-            // dialogue glyphs that are already in screen space.
+        } else if (IsInGameCGCaption(child, root, width, height)) {
             const bool new_caption =
                 child != g_unified_ui.in_game_cg_caption;
             g_unified_ui.in_game_cg_caption = child;
@@ -2635,13 +2620,21 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             original(child, new_x, new_y);
             RememberProcessedLayoutObject(child);
             if (!g_unified_ui.in_game_cg_caption_logged) {
-                Log("Unified UI photo album CG native caption self=%p y=%d -> %d,%d",
+                Log("Unified UI native caption/status bar self=%p y=%d -> %d,%d",
                     child, g_unified_ui.in_game_cg_caption_native_y,
                     new_x, new_y);
                 g_unified_ui.in_game_cg_caption_logged = true;
             }
-        } else if (child == g_unified_ui.in_game_cg_item_notice &&
-                   IsInGameCGVisible()) {
+        } else if (IsInGameCGItemNotice(
+                       child, root, width, height)) {
+            const bool new_notice =
+                child != g_unified_ui.in_game_cg_item_notice;
+            g_unified_ui.in_game_cg_item_notice = child;
+            if (new_notice) {
+                g_unified_ui.in_game_cg_item_notice_native_x = x;
+                g_unified_ui.in_game_cg_item_notice_native_y = y;
+                g_unified_ui.in_game_cg_item_notice_logged = false;
+            }
             int new_x = 0;
             int new_y = 0;
             GetInGameCGNativeOverlayPosition(
@@ -2651,7 +2644,7 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             original(child, new_x, new_y);
             RememberProcessedLayoutObject(child);
             if (!g_unified_ui.in_game_cg_item_notice_logged) {
-                Log("Unified UI in-game CG native item notice self=%p source=%d,%d -> %d,%d",
+                Log("Unified UI native status notice self=%p source=%d,%d -> %d,%d",
                     child,
                     g_unified_ui.in_game_cg_item_notice_native_x,
                     g_unified_ui.in_game_cg_item_notice_native_y,
@@ -3076,41 +3069,70 @@ void RefreshInGameCGOverlays() {
         !g_unified_ui.trampoline) {
         return;
     }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    const auto refresh_caption = [&]() {
+        if (!CanReadGuiObject(g_unified_ui.in_game_cg_caption)) {
+            return;
+        }
+        auto* caption_bytes = static_cast<unsigned char*>(
+            g_unified_ui.in_game_cg_caption);
+        void* parent = *reinterpret_cast<void**>(caption_bytes + 0xF0);
+        const int width = *reinterpret_cast<int*>(caption_bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(caption_bytes + 0x8C);
+        if (*(caption_bytes + 0x99) == 0 ||
+            !IsInGameCGCaption(g_unified_ui.in_game_cg_caption,
+                parent, width, height)) {
+            return;
+        }
+        int x = 0;
+        int y = 0;
+        GetInGameCGCaptionPosition(
+            g_unified_ui.in_game_cg_caption_native_y, x, y);
+        original(g_unified_ui.in_game_cg_caption, x, y);
+    };
+    const auto refresh_status_notice = [&]() {
+        if (!CanReadGuiObject(g_unified_ui.in_game_cg_item_notice)) {
+            return;
+        }
+        auto* notice_bytes = static_cast<unsigned char*>(
+            g_unified_ui.in_game_cg_item_notice);
+        void* parent = *reinterpret_cast<void**>(notice_bytes + 0xF0);
+        const int width = *reinterpret_cast<int*>(notice_bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(notice_bytes + 0x8C);
+        if (*(notice_bytes + 0x99) == 0 ||
+            !IsInGameCGItemNotice(g_unified_ui.in_game_cg_item_notice,
+                parent, width, height)) {
+            return;
+        }
+        int x = 0;
+        int y = 0;
+        GetInGameCGNativeOverlayPosition(
+            g_unified_ui.in_game_cg_item_notice_native_x,
+            g_unified_ui.in_game_cg_item_notice_native_y, x, y);
+        original(g_unified_ui.in_game_cg_item_notice, x, y);
+    };
+
+    // Once retained, correct the notice immediately at every UI submission.
+    // The game writes its authored x=0 directly after BeginScene, bypassing
+    // HookGuiMove. This cheap one-object pass must therefore happen before the
+    // same-millisecond discovery throttle below. The expensive root scan
+    // remains rate-limited.
+    refresh_caption();
+    refresh_status_notice();
     const ULONGLONG now = GetTickCount64();
     if (now == g_unified_ui.last_in_game_cg_overlay_refresh_tick) {
         return;
     }
     g_unified_ui.last_in_game_cg_overlay_refresh_tick = now;
     DiscoverInGameCGSurfaces(g_unified_ui.primary_root);
+    // Discovery may have retained the notice for the first time in this pass.
+    refresh_caption();
+    refresh_status_notice();
     if (!IsInGameCGVisible()) {
         return;
     }
 
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     LayoutInGameCGRoot(g_unified_ui.in_game_cg_root);
-    if (CanReadGuiObject(g_unified_ui.in_game_cg_caption)) {
-        auto* caption_bytes = static_cast<unsigned char*>(
-            g_unified_ui.in_game_cg_caption);
-        if (*(caption_bytes + 0x99) != 0) {
-            int x = 0;
-            int y = 0;
-            GetInGameCGCaptionPosition(
-                g_unified_ui.in_game_cg_caption_native_y, x, y);
-            original(g_unified_ui.in_game_cg_caption, x, y);
-        }
-    }
-    if (CanReadGuiObject(g_unified_ui.in_game_cg_item_notice)) {
-        auto* notice_bytes = static_cast<unsigned char*>(
-            g_unified_ui.in_game_cg_item_notice);
-        if (*(notice_bytes + 0x99) != 0) {
-            int x = 0;
-            int y = 0;
-            GetInGameCGNativeOverlayPosition(
-                g_unified_ui.in_game_cg_item_notice_native_x,
-                g_unified_ui.in_game_cg_item_notice_native_y, x, y);
-            original(g_unified_ui.in_game_cg_item_notice, x, y);
-        }
-    }
     for (auto& overlay : g_unified_ui.in_game_cg_native_overlays) {
         if (!CanReadGuiObject(overlay.object) ||
             overlay.object == g_unified_ui.in_game_cg_caption ||
@@ -3525,9 +3547,7 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         }
         const bool direct_cg_caption = IsInGameCGCaption(
             self, parent, self_width, self_height);
-        const bool cg_caption_context =
-            IsInGameCGVisible() || IsPhotoAlbumCGVisible();
-        if (cg_caption_context && direct_cg_caption) {
+        if (direct_cg_caption) {
             if (self != g_unified_ui.in_game_cg_caption) {
                 g_unified_ui.in_game_cg_caption = self;
                 if (y >= 0 && y <= 600) {
@@ -3540,11 +3560,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        const bool direct_cg_item_notice =
-            parent == g_unified_ui.primary_root &&
-            self_width >= 798 && self_width <= 802 &&
-            self_height >= 122 && self_height <= 134;
-        if (IsInGameCGVisible() && direct_cg_item_notice) {
+        const bool direct_status_notice = IsInGameCGItemNotice(
+            self, parent, self_width, self_height);
+        if (direct_status_notice) {
             if (self != g_unified_ui.in_game_cg_item_notice) {
                 g_unified_ui.in_game_cg_item_notice = self;
                 if (x >= -800 && x <= 800 && y >= -200 && y <= 600) {
@@ -3593,14 +3611,6 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 MulDiv(y, viewport_height, 600));
             return;
         }
-        if (self == g_unified_ui.in_game_cg_caption &&
-            IsInGameCGVisible()) {
-            GetInGameCGCaptionPosition(
-                g_unified_ui.in_game_cg_caption_native_y, x, y);
-            original(self, x, y);
-            return;
-        }
-
         if (self == g_unified_ui.photo_album_root) {
             int viewport_x = 0;
             int viewport_y = 0;
