@@ -53,6 +53,28 @@ int wmain() {
           "render compatibility option was incorrectly debug-gated");
     Check(config.suppress_proxy_containers,
           "proxy suppression option was incorrectly debug-gated");
+    Check(config.font_name == L"SimHei",
+          "FontName must default to SimHei");
+    Check(config.font_scale == 1.00,
+          "FontScale must default to 1.00");
+
+    WriteOption(path, L"FontName", L"Microsoft JhengHei");
+    config = stardom::LoadConfig(path);
+    Check(config.font_name == L"Microsoft JhengHei",
+          "configured FontName was not loaded");
+
+    WriteOption(path, L"FontScale", L"1.25");
+    config = stardom::LoadConfig(path);
+    Check(config.font_scale == 1.25,
+          "configured FontScale was not loaded");
+    WriteOption(path, L"FontScale", L"2.0");
+    config = stardom::LoadConfig(path);
+    Check(config.font_scale == 1.50,
+          "FontScale upper bound was not enforced");
+    WriteOption(path, L"FontScale", L"invalid");
+    config = stardom::LoadConfig(path);
+    Check(config.font_scale == 1.00,
+          "malformed FontScale did not use the default");
 
     WriteOption(path, L"DebugMode", L"1");
     config = stardom::LoadConfig(path);
@@ -63,6 +85,12 @@ int wmain() {
           "container probe did not activate in DebugMode");
     Check(config.gui_runtime_probe,
           "runtime probe did not activate in DebugMode");
+
+    WriteOption(path, L"FontName",
+                L"This font face name is longer than LOGFONT permits");
+    config = stardom::LoadConfig(path);
+    Check(config.font_name == L"SimHei",
+          "overlong FontName did not fall back to SimHei");
 
     DeleteFileW(path.c_str());
     return failures == 0 ? 0 : 1;

@@ -22,6 +22,7 @@ add_library(d3d9 SHARED
     src/render_diagnostics.cpp
     src/render_diagnostics.h
     src/d3d9_video.cpp
+    src/d3d9_font.cpp
     src/d3d9_proxy_internal.h
     src/ui_layout_state.h
     src/ui_layout_state.cpp
@@ -30,7 +31,7 @@ add_library(d3d9 SHARED
 target_include_directories(d3d9 PRIVATE src)
 target_compile_features(d3d9 PRIVATE cxx_std_17)
 target_compile_definitions(d3d9 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-target_link_libraries(d3d9 PRIVATE user32 dxguid)
+target_link_libraries(d3d9 PRIVATE user32 gdi32 dxguid)
 if(MSVC)
     target_link_options(d3d9 PRIVATE "/MAP:${CMAKE_CURRENT_BINARY_DIR}/d3d9.map")
 endif()
@@ -66,8 +67,18 @@ target_include_directories(proxy_config_tests PRIVATE src)
 target_compile_definitions(proxy_config_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 set_property(TARGET proxy_config_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+add_executable(font_replacement_tests tests/font_replacement_tests.cpp)
+target_compile_features(font_replacement_tests PRIVATE cxx_std_17)
+target_compile_definitions(font_replacement_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(font_replacement_tests PRIVATE gdi32)
+set_property(TARGET font_replacement_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_test(NAME resolution_geometry COMMAND resolution_geometry_tests)
 add_test(NAME proxy_config COMMAND proxy_config_tests)
+add_test(NAME font_replacement_default
+    COMMAND font_replacement_tests $<TARGET_FILE:d3d9> SimHei 1.00 20)
+add_test(NAME font_replacement_scaled
+    COMMAND font_replacement_tests $<TARGET_FILE:d3d9> Arial 1.25 25)
 add_test(NAME proxy_default
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080)
 add_test(NAME proxy_16_9

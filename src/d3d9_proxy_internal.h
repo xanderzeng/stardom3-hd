@@ -15,6 +15,7 @@ namespace stardom {
 
 extern ULONGLONG g_attach_tick;
 
+std::wstring IniPath();
 void Log(const char* format, ...);
 void LogProbeBytes(const unsigned char* address, size_t count);
 bool IsDebugModeEnabled();
@@ -51,5 +52,10 @@ bool InstallUIDrawHooks(IDirect3DDevice9* device, bool diagnostics,
 
 bool InstallOpeningVideoHooks();
 bool IsOpeningTitleTransitionPending();
+bool PatchImport(HMODULE module, const char* imported_dll,
+                 const char* imported_name, void* replacement,
+                 void** original);
+
+bool InstallFontReplacementHook();
 
 }  // namespace stardom

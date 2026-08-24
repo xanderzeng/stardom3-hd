@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cwchar>
 #include <iterator>
+#include <string>
 
 namespace stardom {
 namespace {
@@ -27,6 +29,37 @@ int ReadResolutionValue(const std::wstring& ini_path, const wchar_t* key,
     valid = errno == 0 && end != text && *end == L'\0' &&
         parsed >= INT_MIN && parsed <= INT_MAX;
     return valid ? static_cast<int>(parsed) : 0;
+}
+
+std::wstring ReadFontName(const std::wstring& ini_path) {
+    constexpr wchar_t kDefaultFontName[] = L"SimHei";
+    wchar_t value[256]{};
+    const DWORD length = GetPrivateProfileStringW(
+        L"Widescreen", L"FontName", kDefaultFontName, value,
+        static_cast<DWORD>(std::size(value)), ini_path.c_str());
+    if (length == 0 || length >= LF_FACESIZE) {
+        return kDefaultFontName;
+    }
+    return value;
+}
+
+double ReadFontScale(const std::wstring& ini_path) {
+    constexpr double kDefaultFontScale = 1.00;
+    wchar_t text[64]{};
+    const DWORD length = GetPrivateProfileStringW(
+        L"Widescreen", L"FontScale", L"1.00", text,
+        static_cast<DWORD>(std::size(text)), ini_path.c_str());
+    if (length == 0) {
+        return kDefaultFontScale;
+    }
+    wchar_t* end = nullptr;
+    errno = 0;
+    const double parsed = std::wcstod(text, &end);
+    if (errno != 0 || end == text || *end != L'\0' ||
+        !std::isfinite(parsed)) {
+        return kDefaultFontScale;
+    }
+    return std::clamp(parsed, 0.75, 1.50);
 }
 
 }  // namespace
@@ -78,6 +111,8 @@ Config LoadConfig(const std::wstring& ini_path) {
     config.title_screen_mode = std::clamp(static_cast<int>(
         GetPrivateProfileIntW(L"Widescreen", L"TitleScreenMode", 1,
                               ini_path.c_str())), 0, 1);
+    config.font_name = ReadFontName(ini_path);
+    config.font_scale = ReadFontScale(ini_path);
     return config;
 }
 

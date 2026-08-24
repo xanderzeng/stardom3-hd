@@ -35,6 +35,10 @@
 4. 将 `d3d9.dll` 和 `Stardom3.Widescreen.ini` 复制到 `Stardom3.exe` 同一目录。
 5. 根据显示器分辨率编辑 INI，然后正常启动游戏。
 
+字体替换可通过 INI 中的 `FontName` 配置。它仅替换游戏原本请求的
+`MingLiU` 字体，默认使用 Windows 黑体 `SimHei`；也可填写其他已安装的 Windows 字体族名。
+`FontScale` 只缩放替换字体的高度，默认为 `1.00`，可在 `0.75`–`1.50` 之间调整；过度放大可能超出游戏的固定字形格。
+
 推荐的 1920×1080 配置：
 
 ```ini

@@ -267,6 +267,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(instance);
         stardom::g_module_dir = stardom::ModuleDirectory();
         stardom::g_attach_tick = GetTickCount64();
+        stardom::InstallFontReplacementHook();
         stardom::InstallOpeningVideoHooks();
     }
     return TRUE;

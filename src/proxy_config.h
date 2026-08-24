@@ -23,6 +23,8 @@ struct Config {
     bool gui_runtime_probe = false;
     bool unified_ui_layout = true;
     int title_screen_mode = 1;
+    std::wstring font_name = L"SimHei";
+    double font_scale = 1.00;
 };
 
 Config LoadConfig(const std::wstring& ini_path);
