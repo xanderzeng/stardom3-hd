@@ -1,4 +1,9 @@
-#include "d3d9_proxy_internal.h"
+#include "font_hook.h"
+
+#include "font_config.h"
+#include "import_hook.h"
+
+#include <windows.h>
 
 #include <algorithm>
 #include <climits>
@@ -6,21 +11,33 @@
 #include <cstring>
 #include <string>
 
-namespace stardom {
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+
+namespace stardom_font {
 namespace {
 
 using CreateFontIndirectAFn = HFONT (WINAPI*)(const LOGFONTA*);
 
-CreateFontIndirectAFn g_original_create_font_indirect_a = nullptr;
-bool g_font_hook_attempted = false;
-bool g_font_hook_installed = false;
+ImportHook g_create_font_hook;
+bool g_hook_attempted = false;
 
-const Config& FontConfig() {
-    static const Config config = LoadConfig(IniPath());
+std::wstring IniPath() {
+    wchar_t path[MAX_PATH]{};
+    GetModuleFileNameW(reinterpret_cast<HMODULE>(&__ImageBase), path,
+                       MAX_PATH);
+    std::wstring value(path);
+    const auto slash = value.find_last_of(L"\\/");
+    const std::wstring directory =
+        slash == std::wstring::npos ? L"." : value.substr(0, slash);
+    return directory + L"\\Stardom3.FontPatch.ini";
+}
+
+const FontConfig& Config() {
+    static const FontConfig config = LoadFontConfig(IniPath());
     return config;
 }
 
-LONG ScaleFontHeight(LONG height, double scale) {
+LONG ScaleHeight(LONG height, double scale) {
     if (height == 0) {
         return 0;
     }
@@ -28,10 +45,7 @@ LONG ScaleFontHeight(LONG height, double scale) {
         static_cast<double>(height) * scale,
         static_cast<double>(LONG_MIN), static_cast<double>(LONG_MAX));
     const LONG rounded = static_cast<LONG>(std::lround(scaled));
-    if (rounded == 0) {
-        return height < 0 ? -1 : 1;
-    }
-    return rounded;
+    return rounded != 0 ? rounded : (height < 0 ? -1 : 1);
 }
 
 LONG FontPixelHeight(LONG height) {
@@ -42,11 +56,14 @@ LONG FontPixelHeight(LONG height) {
 }
 
 HFONT WINAPI HookCreateFontIndirectA(const LOGFONTA* font) {
-    if (!font || _stricmp(font->lfFaceName, "MingLiU") != 0) {
-        return g_original_create_font_indirect_a(font);
+    const auto original = reinterpret_cast<CreateFontIndirectAFn>(
+        g_create_font_hook.original);
+    if (!original || !font || !Config().enabled ||
+        _stricmp(font->lfFaceName, "MingLiU") != 0) {
+        return original ? original(font) : nullptr;
     }
 
-    const Config& config = FontConfig();
+    const FontConfig& config = Config();
     const bool use_small_font = config.small_font_max_height > 0 &&
         FontPixelHeight(font->lfHeight) <= config.small_font_max_height;
     const std::wstring& replacement_name = use_small_font
@@ -55,8 +72,7 @@ HFONT WINAPI HookCreateFontIndirectA(const LOGFONTA* font) {
         ? config.small_font_scale : config.font_scale;
 
     LOGFONTW replacement{};
-    replacement.lfHeight = ScaleFontHeight(
-        font->lfHeight, replacement_scale);
+    replacement.lfHeight = ScaleHeight(font->lfHeight, replacement_scale);
     replacement.lfWidth = font->lfWidth;
     replacement.lfEscapement = font->lfEscapement;
     replacement.lfOrientation = font->lfOrientation;
@@ -72,21 +88,24 @@ HFONT WINAPI HookCreateFontIndirectA(const LOGFONTA* font) {
     wcsncpy_s(replacement.lfFaceName, replacement_name.c_str(), _TRUNCATE);
 
     HFONT created = CreateFontIndirectW(&replacement);
-    return created ? created : g_original_create_font_indirect_a(font);
+    return created ? created : original(font);
 }
 
 }  // namespace
 
-bool InstallFontReplacementHook() {
-    if (g_font_hook_attempted) {
-        return g_font_hook_installed;
+bool InstallFontHook() {
+    if (g_hook_attempted) {
+        return g_create_font_hook.slot != nullptr;
     }
-    g_font_hook_attempted = true;
-    g_font_hook_installed = PatchImport(
+    g_hook_attempted = true;
+    return PatchImport(
         GetModuleHandleW(nullptr), "gdi32.dll", "CreateFontIndirectA",
         reinterpret_cast<void*>(&HookCreateFontIndirectA),
-        reinterpret_cast<void**>(&g_original_create_font_indirect_a));
-    return g_font_hook_installed;
+        g_create_font_hook);
 }
 
-}  // namespace stardom
+bool UninstallFontHook() {
+    return RestoreImport(g_create_font_hook);
+}
+
+}  // namespace stardom_font

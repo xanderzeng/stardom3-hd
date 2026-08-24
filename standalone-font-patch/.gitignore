@@ -1,0 +1,4 @@
+/build/
+/*.log
+/release/*.zip
+!/release/d3d9.dll
