@@ -43,8 +43,48 @@ old 800x600 canvas. Source matching is a last-resort fallback after all known
 screen-space surfaces, so a shared caller cannot override a schedule panel or
 toolbar's specialized transform. Compact early-game toolbars use their native
 six-item 275px width, while the temporary five-item construction state and the
-later seven-item toolbar use 230px and 320px respectively. Object identity is retained when auto-sized
-tags change width with their text.
+later seven-item toolbar use 230px and 320px respectively. Visible toolbar
+buttons are normalized into the authored `5, 51, 96, 141, 186, 231, 276`
+slots whenever the active count changes. This repairs early saves whose
+five-to-six transition expands the background but leaves the last two buttons
+overlapping. The identified toolbar root is retained and its seven direct
+children are checked once per rendered-frame interval, because entering a
+venue and loading a save can both run the scene controller after the periodic
+root layout pass and overwrite an already-correct slot. Object identity is
+retained when auto-sized tags change width with their text.
+
+Toolbar width changes use Stardom3's native GUI `SetSize` path. Writing the
+width field alone updates bounds and anchoring but does not invoke the Plane
+virtual that rebuilds its background geometry, leaving a seven-slot backing
+behind a compact five-button toolbar. The native rebuild still maps the full
+seven-slot `7001` texture onto the shorter quad, so the render hook recognizes
+only that bottom-right background quad and limits its horizontal UV range to
+`5/7` or `6/7`. This preserves the authored slot spacing instead of squeezing
+seven backing cells underneath five or six buttons.
+
+The team-formation friendship tag is another world-following control, but its
+66x19 root has two children: a 20x18 numeric label and a 15x15 relationship
+icon. That complete signature bypasses page anchoring and keeps the position
+submitted by the team controller. In particular, a native `(320,411)` tag at
+1280x720 remains `(320,411)` instead of being shifted to `(560,531)`.
+
+Centered 800x600 pages retain their authored dimensions after their initial
+placement. A child move under such a page is not treated as new-page
+construction once the parent has been processed. This is important for world
+dialogue: advancing one line moves several dialogue children, and replaying a
+complete primary-root reflow for each move causes a visible input stall.
+
+The random phone event uses a zero-sized `BababaCallOut` root whose phone
+button is dynamically parked at `(-40,-40)` while idle. The root is identified
+by its complete five-child structure rather than by the button's transient
+position. The zero-sized structural root keeps its visibility byte cleared
+even while its children render, so the ringing phase is identified from the
+visible phone button with all dialogue panels hidden. The retained button is
+restored immediately to its bottom-left widescreen anchor, and later
+off-screen position writes are corrected in the GUI move hook before they can
+overwrite it. Once a dialogue,
+confirmation, countdown or question panel is visible, the event controller
+again owns the button position.
 
 The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble
 structure as projected NPC dialogue, but its native `(320,60)` coordinate is
@@ -82,6 +122,13 @@ structure: it is a direct child of the primary root, sits at the origin, is
 approximately 802x602, and has no descendants. This leaf surface is resized to
 the complete output resolution. Legacy pages with child controls keep their
 native 800x600 size and centered placement.
+
+The map and save-load progress page is a different 800x600 control tree. Its
+top status badge, central artwork and bottom progress strip identify it without
+matching ordinary legacy pages. While that page is visible, rendering outside
+its centered rectangle is clipped and the complete output is cleared to black
+before the page is drawn. This preserves the authored loading artwork while
+preventing the previous 3D scene and HUD from showing around it.
 
 The title screen is recognized by its seven 100x100 menu buttons, version
 label, paired 800x600 background layers, and paired animated middle strips.
@@ -223,6 +270,59 @@ attribute values, radar grid, filled data polygon, six labels, and hit-test
 controls all use the same 4:3 transform. This avoids the former mixed layout
 where the profile surface remained at 800x600 while the renderer used the
 widescreen viewport for some attribute-chart submissions.
+
+The artist contract page follows the same aspect-fit policy. It is identified
+by its single 522x290 contract card, the 100x120 portrait, and the complete
+three-button action column. The page, card, portrait, labels, action buttons,
+and hit rectangles are cached and scaled as one subtree, including later
+runtime moves submitted by the contract controller.
+
+The signing and renewal dossier is a separate 802x602 page recognized by its
+single 434x410 panel, 100x120 portrait, and paired 98x28 decision buttons. The
+dossier subtree is aspect-fitted with its labels and hit rectangles, while the
+full-height character cut-in remains at its authored size as a separate root.
+
+The large-studio event manager is a direct-root 800x600 editor page. It is
+identified by its 760x567 ground panel, ten 480x20 event rows, 92x32 exit
+button, and 28x226 scroll track. The complete page hierarchy is fitted as one
+layout group so row buttons, pagination, scroll controls, labels, and their
+hit rectangles retain the authored relationships. Runtime row arrangement is
+kept controller-driven; maintenance passes do not replay the resource-template
+positions over the visible list. While the page is visible, drawing is clipped
+to the fitted viewport and the uncovered output regions are cleared to black
+rather than exposing the renderer's blue clear colour.
+
+The event editor is a separate direct-root 800x600 `EventUnit` overlay rather
+than a child of the event list. It is identified by its 760x577 panel, paired
+700x190 dialogue sections, and five 98x28 bottom action buttons, then fitted to
+the same viewport. Its controller remains responsible for live selection and
+edit-control movement; only new coordinates are transformed after discovery,
+so opening dropdowns or editing event units does not restore template slots.
+The five-row `Editor/SelectList` controls are detached direct-root overlays as
+well. All five pre-created width variants retain independent geometry caches;
+their game-supplied native anchors, popup frames, option rows, arrows and hit
+rectangles receive the editor's aspect-fit transform together. If a popup was
+centered before its children finished construction, its native anchor is
+recovered only when the stored position actually contains both canvas offsets,
+so hidden controls initialized at `(0,0)` are not converted to negative space.
+Because the tutorial and editor reuse both the seven-child resource shape and
+pooled object addresses, a currently visible tutorial root takes precedence
+over every retained editor-dropdown record. Tutorial birthday selectors thus
+keep their centered native size and placement when revisiting character setup.
+
+Training selection already uses the expanded 800x600 page viewport, but each
+activity launches a separate 426x369 minigame frame. The frame is recognized
+by its 215x32 timer, 426x333 full-frame layer, and 400x230 play surface. Its
+authored (187,126) position is recovered from the generic centred-canvas
+translation before the frame, activity layers, labels and hit rectangles are
+aspect-fitted together. The actual activity animation is hosted by a separate
+set of direct-root 800x600 pages, each containing a 400x300 playfield at
+(200,175); those pages are detected only while the frame exists and are fitted
+to the same viewport so the rendered game, animation geometry and frame remain
+aligned. When the training page's fitted 800x600 background is submitted, the
+renderer clears the two regions outside that viewport after the office scene
+and before the training UI, keeping both the activity and result screens on
+black side bars without changing ordinary announcement pages.
 
 ## Reference HUD positions
 

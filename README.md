@@ -35,6 +35,10 @@
 4. 将 `d3d9.dll` 和 `Stardom3.Widescreen.ini` 复制到 `Stardom3.exe` 同一目录。
 5. 根据显示器分辨率编辑 INI，然后正常启动游戏。
 
+字体替换可通过 INI 中的 `FontName` 配置。它仅替换游戏原本请求的
+`MingLiU` 字体，默认使用 Windows 黑体 `SimHei`；也可填写其他已安装的 Windows 字体族名。
+`FontScale` 只缩放替换字体的高度，默认为 `1.00`，可在 `0.75`–`1.50` 之间调整；过度放大可能超出游戏的固定字形格。
+
 推荐的 1920×1080 配置：
 
 ```ini
@@ -69,16 +73,17 @@ Height=1440
 | `Borderless` | `0` / `1` | `0` 为普通窗口，`1` 为无边框窗口。 |
 | `NativeRender` | `0` / `1` | `1` 使用目标分辨率原生渲染；`0` 保留 800×600 逻辑后备缓冲作为兼容模式。推荐设为 `1`。 |
 | `UIScaleMode` | `0` / `1` / `2` | `0` 保留原始左上角 UI；`1` 居中并保持 4:3 比例；`2` 将 UI 视口扩展到整个宽屏。随附配置使用 `2`。 |
+| `DebugMode` | `0` / `1` | 开发诊断总开关。正式发布和普通游玩必须保持 `0`。 |
 | `UnifiedUILayout` | `0` / `1` | 启用游戏 UI 控件的统一宽屏重排和相关特殊界面修正。推荐设为 `1`。 |
 | `TitleScreenMode` | `0` / `1` | 标题画面显示方式。`0` 保留原始 800×600 居中页面；`1` 等比放大到屏幕高度并保留左右侧翼。推荐设为 `1`。 |
 
-以下选项主要用于开发和故障诊断，普通玩家建议保持 `0`：
+以下纯诊断选项只有在 `DebugMode=1` 时才会生效：
 
 - `UIDrawDiagnostics`
-- `SuppressTransparentUI`
 - `UIContainerProbe`
-- `SuppressProxyContainers`
 - `GUIRuntimeProbe`
+
+`SuppressTransparentUI` 和 `SuppressProxyContainers` 是可选的渲染兼容策略，不属于纯诊断开关，因此不受 `DebugMode` 限制。
 
 如果出现界面错位，可先尝试 `UIScaleMode=1`；如果原生渲染在特定显卡或兼容层下异常，可尝试 `NativeRender=0`。
 

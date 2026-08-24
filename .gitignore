@@ -36,6 +36,7 @@ build.ninja
 .ninja_log
 
 # Editor, Python, and OS-local files
+/AGENTS.md
 .vscode/
 .idea/
 __pycache__/

@@ -15,14 +15,18 @@ namespace stardom {
 
 extern ULONGLONG g_attach_tick;
 
+std::wstring IniPath();
 void Log(const char* format, ...);
 void LogProbeBytes(const unsigned char* address, size_t count);
+bool IsDebugModeEnabled();
 
 bool CanReadGuiObject(const void* object);
 void RefreshUnifiedUILayout();
 void RefreshUnifiedUILayoutNow();
+bool GetToolbarBackgroundRenderRect(RECT& rect, float& texture_width_ratio);
 void RefreshInGameCGOverlays();
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode);
+bool PatchActiveTagBounds(UINT width, UINT height);
 bool PatchMapLocationProjectionBounds(UINT width, UINT height);
 bool PatchAirportLocationLabelFilter();
 bool PatchMapLocationVisibilityGuards();
@@ -34,6 +38,9 @@ bool IsPhotoAlbumCGVisible();
 bool IsPhotoAlbumScreenVisible();
 bool IsInGameCGVisible();
 bool IsAnnouncementScreenVisible();
+bool IsTrainingScreenPillarboxNeeded();
+bool IsStudioEventListScreenVisible();
+bool GetLoadingScreenRect(RECT& rect);
 bool IsTitleScreenVisible();
 bool IsTitleTutorialVisible();
 
@@ -45,5 +52,10 @@ bool InstallUIDrawHooks(IDirect3DDevice9* device, bool diagnostics,
 
 bool InstallOpeningVideoHooks();
 bool IsOpeningTitleTransitionPending();
+bool PatchImport(HMODULE module, const char* imported_dll,
+                 const char* imported_name, void* replacement,
+                 void** original);
+
+bool InstallFontReplacementHook();
 
 }  // namespace stardom

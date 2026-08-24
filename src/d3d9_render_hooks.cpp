@@ -215,6 +215,8 @@ HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
     if (device == g_device_hook.device &&
         g_device_hook.original_begin_scene) {
         g_device_hook.title_pillarbox_cleared = false;
+        g_device_hook.training_pillarbox_cleared = false;
+        g_device_hook.loading_background_cleared = false;
         g_device_hook.title_ready_before_draw = IsTitleScreenVisible();
         return g_device_hook.original_begin_scene(device);
     }
@@ -601,8 +603,13 @@ struct TitleScreenClipState {
 
 TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     TitleScreenClipState state;
+    RECT loading_rect{};
+    const bool loading_page = GetLoadingScreenRect(loading_rect);
+    const bool title_page =
+        IsTitleScreenVisible() || IsTitleTutorialVisible();
+    const bool studio_event_list = IsStudioEventListScreenVisible();
     if (!device || !g_device_hook.active_target_is_main ||
-        (!IsTitleScreenVisible() && !IsTitleTutorialVisible())) {
+        (!loading_page && !title_page && !studio_event_list)) {
         return state;
     }
 
@@ -612,13 +619,24 @@ TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     int viewport_height = 0;
     GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
         viewport_x, viewport_y, viewport_width, viewport_height);
-    RECT title_rect{
-        viewport_x,
-        viewport_y,
-        viewport_x + viewport_width,
-        viewport_y + viewport_height,
-    };
-    if (!g_device_hook.title_pillarbox_cleared) {
+    RECT title_rect = loading_page ? loading_rect : RECT{
+        viewport_x, viewport_y,
+        viewport_x + viewport_width, viewport_y + viewport_height};
+    if (loading_page && !g_device_hook.loading_background_cleared) {
+        if (SUCCEEDED(device->Clear(
+                0, nullptr, D3DCLEAR_TARGET,
+                D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
+            g_device_hook.loading_background_cleared = true;
+            if (!g_device_hook.loading_background_logged) {
+                Log("Loading page output background cleared behind %ld,%ld %ldx%ld",
+                    loading_rect.left, loading_rect.top,
+                    loading_rect.right - loading_rect.left,
+                    loading_rect.bottom - loading_rect.top);
+                g_device_hook.loading_background_logged = true;
+            }
+        }
+    }
+    if (!loading_page && !g_device_hook.title_pillarbox_cleared) {
         D3DRECT bars[4]{};
         DWORD bar_count = 0;
         if (viewport_x > 0) {
@@ -648,7 +666,7 @@ TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
                 D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
             g_device_hook.title_pillarbox_cleared = true;
             if (!g_device_hook.title_pillarbox_logged) {
-                Log("Title screen pillarbox cleared around %d,%d %dx%d",
+                Log("Aspect-fit page pillarbox cleared around %d,%d %dx%d",
                     viewport_x, viewport_y, viewport_width, viewport_height);
                 g_device_hook.title_pillarbox_logged = true;
             }
@@ -794,6 +812,176 @@ bool IsAnnouncementLegacyQuad(float min_x, float min_y,
         NearlyEqual(max_y - min_y, 200.0f) && min_x >= -1.0f &&
         min_y >= -1.0f && max_x <= 801.0f && max_y <= 601.0f;
     return background || preview;
+}
+
+bool CropToolbarBackgroundVertices(IDirect3DDevice9* device,
+                                   D3DPRIMITIVETYPE type,
+                                   UINT primitive_count,
+                                   const void* vertices, UINT stride,
+                                   std::vector<unsigned char>& cropped) {
+    if (!device || type != D3DPT_TRIANGLESTRIP || primitive_count != 2 ||
+        !vertices || stride < sizeof(float) * 4 ||
+        !g_device_hook.active_target_is_main ||
+        !IsPretransformedUI(device, nullptr)) {
+        return false;
+    }
+
+    RECT toolbar_rect{};
+    float texture_width_ratio = 1.0f;
+    if (!GetToolbarBackgroundRenderRect(toolbar_rect,
+                                        texture_width_ratio)) {
+        return false;
+    }
+
+    constexpr UINT kVertexCount = 4;
+    const auto* source = static_cast<const unsigned char*>(vertices);
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    for (UINT i = 0; i < kVertexCount; ++i) {
+        const auto* position = reinterpret_cast<const float*>(
+            source + static_cast<size_t>(i) * stride);
+        min_x = std::min(min_x, position[0]);
+        min_y = std::min(min_y, position[1]);
+        max_x = std::max(max_x, position[0]);
+        max_y = std::max(max_y, position[1]);
+    }
+    if (!NearlyEqual(min_x, static_cast<float>(toolbar_rect.left), 2.0f) ||
+        !NearlyEqual(min_y, static_cast<float>(toolbar_rect.top), 2.0f) ||
+        !NearlyEqual(max_x, static_cast<float>(toolbar_rect.right), 2.0f) ||
+        !NearlyEqual(max_y, static_cast<float>(toolbar_rect.bottom), 2.0f)) {
+        return false;
+    }
+
+    DWORD fvf = 0;
+    if (FAILED(device->GetFVF(&fvf))) {
+        return false;
+    }
+    size_t texture_offset = sizeof(float) * 4;
+    if (fvf & D3DFVF_PSIZE) {
+        texture_offset += sizeof(float);
+    }
+    if (fvf & D3DFVF_DIFFUSE) {
+        texture_offset += sizeof(DWORD);
+    }
+    if (fvf & D3DFVF_SPECULAR) {
+        texture_offset += sizeof(DWORD);
+    }
+    const DWORD texture_count =
+        (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
+    if (texture_count < 1 ||
+        texture_offset + sizeof(float) * 2 > stride) {
+        return false;
+    }
+
+    cropped.assign(source, source + static_cast<size_t>(kVertexCount) * stride);
+    float min_u = FLT_MAX;
+    float max_u = -FLT_MAX;
+    for (UINT i = 0; i < kVertexCount; ++i) {
+        const auto* uv = reinterpret_cast<const float*>(
+            source + static_cast<size_t>(i) * stride + texture_offset);
+        min_u = std::min(min_u, uv[0]);
+        max_u = std::max(max_u, uv[0]);
+    }
+    const float uv_range = max_u - min_u;
+    if (uv_range <= 0.0f) {
+        cropped.clear();
+        return false;
+    }
+    for (UINT i = 0; i < kVertexCount; ++i) {
+        auto* uv = reinterpret_cast<float*>(
+            cropped.data() + static_cast<size_t>(i) * stride +
+            texture_offset);
+        uv[0] = min_u + (uv[0] - min_u) * texture_width_ratio;
+    }
+    return true;
+}
+
+bool DrawCroppedToolbarBackgroundPrimitive(IDirect3DDevice9* device,
+                                           D3DPRIMITIVETYPE type,
+                                           UINT start_vertex,
+                                           UINT primitive_count,
+                                           HRESULT& result) {
+    if (!device || !g_device_hook.original_draw_primitive_up) {
+        return false;
+    }
+    IDirect3DVertexBuffer9* buffer = nullptr;
+    UINT stream_offset = 0;
+    UINT stride = 0;
+    if (FAILED(device->GetStreamSource(0, &buffer, &stream_offset, &stride)) ||
+        !buffer || stride < sizeof(float) * 4) {
+        if (buffer) {
+            buffer->Release();
+        }
+        return false;
+    }
+
+    constexpr UINT kVertexCount = 4;
+    const size_t byte_offset = static_cast<size_t>(stream_offset) +
+        static_cast<size_t>(start_vertex) * stride;
+    const size_t byte_count = static_cast<size_t>(kVertexCount) * stride;
+    D3DVERTEXBUFFER_DESC desc{};
+    void* data = nullptr;
+    if (FAILED(buffer->GetDesc(&desc)) || byte_offset > desc.Size ||
+        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
+        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
+                            static_cast<UINT>(byte_count), &data,
+                            D3DLOCK_READONLY))) {
+        buffer->Release();
+        return false;
+    }
+
+    std::vector<unsigned char> cropped;
+    const bool matched = CropToolbarBackgroundVertices(
+        device, type, primitive_count, data, stride, cropped);
+    buffer->Unlock();
+    if (!matched) {
+        buffer->Release();
+        return false;
+    }
+
+    result = g_device_hook.original_draw_primitive_up(
+        device, type, primitive_count, cropped.data(), stride);
+    // DrawPrimitiveUP clears stream 0 by contract.
+    device->SetStreamSource(0, buffer, stream_offset, stride);
+    buffer->Release();
+    return true;
+}
+
+void ClearTrainingPillarbox(IDirect3DDevice9* device) {
+    if (!device || g_device_hook.training_pillarbox_cleared ||
+        !g_device_hook.active_target_is_main ||
+        !IsTrainingScreenPillarboxNeeded()) {
+        return;
+    }
+
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (viewport_x <= 0 || viewport_x + viewport_width >=
+            static_cast<int>(g_device_hook.width)) {
+        return;
+    }
+
+    const D3DRECT bars[2] = {
+        {0, 0, viewport_x, static_cast<LONG>(g_device_hook.height)},
+        {viewport_x + viewport_width, 0,
+         static_cast<LONG>(g_device_hook.width),
+         static_cast<LONG>(g_device_hook.height)},
+    };
+    if (SUCCEEDED(device->Clear(
+            2, bars, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0))) {
+        g_device_hook.training_pillarbox_cleared = true;
+        if (!g_device_hook.training_pillarbox_logged) {
+            Log("Training screen pillarbox cleared around %d,%d %dx%d",
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            g_device_hook.training_pillarbox_logged = true;
+        }
+    }
 }
 
 bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
@@ -952,6 +1140,11 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
         }
     }
 
+    if (announcement_quad && full_legacy_canvas) {
+        // Clear after the office scene has rendered but before the fitted
+        // training background, so only the two regions outside 4:3 turn black.
+        ClearTrainingPillarbox(device);
+    }
     result = g_device_hook.original_draw_primitive_up(
         device, type, primitive_count, shifted.data(), stride);
     // DrawPrimitiveUP clears stream 0 by contract; restore the game's stream
@@ -990,6 +1183,11 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
         HRESULT shifted_result = D3D_OK;
         if (DrawShiftedAnnouncementPrimitive(device, type, start_vertex,
                                              primitive_count, shifted_result)) {
+            return shifted_result;
+        }
+        if (DrawCroppedToolbarBackgroundPrimitive(
+                device, type, start_vertex, primitive_count,
+                shifted_result)) {
             return shifted_result;
         }
         if (g_device_hook.ui_draw_diagnostics) {
@@ -1064,9 +1262,15 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
                       PrimitiveVertexCount(type, primitive_count), stride);
         }
+        std::vector<unsigned char> cropped;
+        const void* draw_vertices = vertices;
+        if (CropToolbarBackgroundVertices(
+                device, type, primitive_count, vertices, stride, cropped)) {
+            draw_vertices = cropped.data();
+        }
         const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
         const HRESULT result = g_device_hook.original_draw_primitive_up(
-            device, type, primitive_count, vertices, stride);
+            device, type, primitive_count, draw_vertices, stride);
         EndTitleScreenClip(device, title_clip);
         return result;
     }
