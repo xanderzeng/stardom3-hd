@@ -5288,6 +5288,60 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
     return true;
 }
 
+bool PatchActiveTagBounds(UINT width, UINT height) {
+    if (width < LegacyCanvas::width || height < LegacyCanvas::height) {
+        return false;
+    }
+    HMODULE executable = GetModuleHandleW(nullptr);
+    if (!executable) {
+        return false;
+    }
+
+    struct BoundPatch {
+        uintptr_t offset;
+        uint32_t expected;
+        uint32_t replacement;
+        const char* name;
+    };
+    // ActiveTag::Move hides the shared toolbar/character explanation label
+    // whenever the cursor is outside the original 800x600 canvas. Preserve
+    // its two-pixel edge margin while extending the check to the output.
+    const BoundPatch patches[] = {
+        {0x83CC0, 798u, width - 2u, "x"},
+        {0x83CCB, 598u, height - 2u, "y"},
+    };
+
+    bool all_patched = true;
+    for (const auto& patch : patches) {
+        auto* target = reinterpret_cast<uint32_t*>(
+            reinterpret_cast<unsigned char*>(executable) + patch.offset);
+        if (*target == patch.replacement) {
+            continue;
+        }
+        if (*target != patch.expected) {
+            Log("ActiveTag bound signature mismatch %s at %p value=%u",
+                patch.name, target, *target);
+            all_patched = false;
+            continue;
+        }
+        DWORD old_protection = 0;
+        if (!VirtualProtect(target, sizeof(*target), PAGE_EXECUTE_READWRITE,
+                            &old_protection)) {
+            Log("ActiveTag bound VirtualProtect failed %s error=%lu",
+                patch.name, GetLastError());
+            all_patched = false;
+            continue;
+        }
+        *target = patch.replacement;
+        DWORD ignored = 0;
+        VirtualProtect(target, sizeof(*target), old_protection, &ignored);
+        FlushInstructionCache(GetCurrentProcess(), target, sizeof(*target));
+        Log("ActiveTag bound patched %s %u -> %u at %p",
+            patch.name, patch.expected, patch.replacement, target);
+    }
+    return all_patched;
+}
+
 bool PatchMapLocationProjectionBounds(UINT width, UINT height) {
     if (width < LegacyCanvas::width || height < LegacyCanvas::height) {
         return false;

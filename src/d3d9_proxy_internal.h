@@ -25,6 +25,7 @@ void RefreshUnifiedUILayoutNow();
 bool GetToolbarBackgroundRenderRect(RECT& rect, float& texture_width_ratio);
 void RefreshInGameCGOverlays();
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode);
+bool PatchActiveTagBounds(UINT width, UINT height);
 bool PatchMapLocationProjectionBounds(UINT width, UINT height);
 bool PatchAirportLocationLabelFilter();
 bool PatchMapLocationVisibilityGuards();

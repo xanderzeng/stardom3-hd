@@ -212,6 +212,7 @@ public:
             if (config.native_render && config.unified_ui_layout) {
                 InstallUnifiedUILayoutHook(output_width, output_height,
                                            config.title_screen_mode);
+                PatchActiveTagBounds(output_width, output_height);
                 PatchMapLocationProjectionBounds(output_width, output_height);
                 PatchAirportLocationLabelFilter();
                 PatchMapLocationVisibilityGuards();
