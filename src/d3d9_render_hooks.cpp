@@ -1,4 +1,5 @@
 #include "d3d9_proxy_internal.h"
+#include "gui_object.h"
 #include "render_diagnostics.h"
 #include "render_hook_state.h"
 
@@ -73,6 +74,7 @@ void ClearScheduleHighlightCache() {
 }
 
 bool FindScheduleHighlightRows() {
+    GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(g_unified_ui.primary_root)) {
         ClearScheduleHighlightCache();
         return false;
@@ -149,13 +151,18 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
         // scan from every draw hook. Retry slowly while the page is absent so
         // a newly opened page is found within a bounded delay without charging
         // thousands of VirtualQuery calls to every frame.
-        constexpr ULONGLONG kScheduleDiscoveryIntervalMs = 1000;
-        if (g_unified_ui.last_schedule_discovery_tick != 0 &&
+        const bool layout_activity = g_unified_ui.processed_count !=
+            g_unified_ui.last_schedule_discovery_processed_count;
+        constexpr ULONGLONG kScheduleDiscoveryIntervalMs = 5000;
+        if (!layout_activity &&
+            g_unified_ui.last_schedule_discovery_tick != 0 &&
             now - g_unified_ui.last_schedule_discovery_tick <
                 kScheduleDiscoveryIntervalMs) {
             return;
         }
         g_unified_ui.last_schedule_discovery_tick = now;
+        g_unified_ui.last_schedule_discovery_processed_count =
+            g_unified_ui.processed_count;
         if (!FindScheduleHighlightRows()) {
             return;
         }
@@ -341,10 +348,16 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
     // Probe only at this viewport transition and rate-limit failed probes so
     // ordinary pages never pay for a control-tree scan on every draw call.
     if (!g_unified_ui.announcement_active) {
-        static ULONGLONG last_announcement_probe_tick = 0;
         const ULONGLONG now = GetTickCount64();
-        if (now - last_announcement_probe_tick >= 250) {
-            last_announcement_probe_tick = now;
+        const bool layout_activity = g_unified_ui.processed_count !=
+            g_device_hook.last_announcement_probe_processed_count;
+        constexpr ULONGLONG kAnnouncementProbeIntervalMs = 5000;
+        if (layout_activity ||
+            now - g_device_hook.last_announcement_probe_tick >=
+                kAnnouncementProbeIntervalMs) {
+            g_device_hook.last_announcement_probe_tick = now;
+            g_device_hook.last_announcement_probe_processed_count =
+                g_unified_ui.processed_count;
             if (IsAnnouncementScreenVisible()) {
                 RefreshUnifiedUILayoutNow();
                 Log("Unified UI announcement activated before first viewport");

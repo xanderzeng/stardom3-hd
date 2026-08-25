@@ -9,6 +9,9 @@ namespace stardom {
 // Runtime context shared by the GUI layout adapters. The legacy global name is
 // retained so injected callbacks can migrate without changing their ABI.
 struct LayoutContext {
+    static constexpr size_t processed_capacity = 16384;
+    static constexpr size_t processed_slot_count = processed_capacity * 2;
+
     UINT width = 0;
     UINT height = 0;
     void* roots[256]{};
@@ -21,15 +24,20 @@ struct LayoutContext {
     size_t world_projected_object_count = 0;
     void* world_move_sources[64]{};
     size_t world_move_source_count = 0;
-    void* processed[16384]{};
+    // Fixed open-addressed set used from the GUI move hook and full-tree
+    // maintenance. A 50% maximum load avoids the old linear scan of up to
+    // 16384 entries on every lookup.
+    void* processed_slots[processed_slot_count]{};
     size_t processed_count = 0;
     void* primary_root = nullptr;
     ULONGLONG last_refresh_tick = 0;
+    size_t last_refresh_processed_count = 0;
     volatile LONG transformed_count = 0;
     void* schedule_root = nullptr;
     void* schedule_highlight_rows[7]{};
     ULONGLONG last_schedule_hover_tick = 0;
     ULONGLONG last_schedule_discovery_tick = 0;
+    size_t last_schedule_discovery_processed_count = 0;
     int last_schedule_hover_row = -2;
     void* photo_album_root = nullptr;
     bool photo_album_viewport_logged = false;
@@ -57,6 +65,7 @@ struct LayoutContext {
     bool in_game_cg_caption_logged = false;
     bool in_game_cg_item_notice_logged = false;
     ULONGLONG last_in_game_cg_overlay_refresh_tick = 0;
+    size_t last_in_game_cg_discovery_processed_count = 0;
     struct InGameCGNativeOverlay {
         void* object = nullptr;
         int native_x = 0;

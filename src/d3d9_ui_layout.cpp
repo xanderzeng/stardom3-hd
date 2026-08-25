@@ -1361,6 +1361,7 @@ RegisterInGameCGNativeOverlay(void* object, int native_x, int native_y,
 }
 
 void DiscoverInGameCGSurfaces(void* root) {
+    GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(root)) {
         return;
     }
@@ -3484,9 +3485,14 @@ void RefreshToolbarSlots(ULONGLONG now) {
 
 bool GetToolbarBackgroundRenderRect(RECT& rect,
                                     float& texture_width_ratio) {
-    if (!CanReadGuiObject(g_toolbar_root) ||
-        g_unified_ui.toolbar_width < 225 ||
+    // Seven-slot mode uses the complete authored background and never needs
+    // UV cropping. Test that retained scalar state before validating the GUI
+    // object because this function is reached from every candidate draw.
+    if (g_unified_ui.toolbar_width < 225 ||
         g_unified_ui.toolbar_width >= 310) {
+        return false;
+    }
+    if (!CanReadGuiObject(g_toolbar_root)) {
         return false;
     }
 
@@ -3630,6 +3636,7 @@ bool TransformToolbarSequenceFrame(void* object, int width, int height,
 }
 
 void ReflowExistingRootChildren(void* root, int depth = 0) {
+    GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(root) || depth > 8 || !g_unified_ui.trampoline) {
         return;
     }
@@ -4224,6 +4231,7 @@ void RefreshUnifiedUILayout() {
     if (!g_unified_ui.installed || !g_unified_ui.primary_root) {
         return;
     }
+    GuiObjectReadBatch read_batch;
     const ULONGLONG now = GetTickCount64();
     RefreshToolbarSlots(now);
     RefreshPhoneOverlayButton();
@@ -4235,12 +4243,22 @@ void RefreshUnifiedUILayout() {
     const bool title_discovery_pending =
         g_unified_ui.title_screen_mode != 0 &&
         g_unified_ui.title_screen_root == nullptr;
-    if (!title_discovery_pending &&
-        now - g_unified_ui.last_refresh_tick < 1000) {
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.last_refresh_processed_count;
+    // GuiMove registers new objects as they are constructed, so topology
+    // changes still trigger maintenance on the next frame. Once the layout is
+    // stable, keep only a sparse fallback scan instead of forcing a full-tree
+    // traversal every second.
+    constexpr ULONGLONG kStableLayoutRefreshIntervalMs = 5000;
+    if (!title_discovery_pending && !layout_activity &&
+        now - g_unified_ui.last_refresh_tick <
+            kStableLayoutRefreshIntervalMs) {
         return;
     }
     g_unified_ui.last_refresh_tick = now;
     ReflowExistingRootChildren(g_unified_ui.primary_root);
+    g_unified_ui.last_refresh_processed_count =
+        g_unified_ui.processed_count;
 
     const bool announcement_active = IsAnnouncementScreenVisible();
     if (announcement_active != g_unified_ui.announcement_active) {
@@ -4315,13 +4333,18 @@ void RefreshInGameCGOverlays() {
     refresh_caption();
     refresh_status_notice();
     const ULONGLONG now = GetTickCount64();
-    constexpr ULONGLONG kInGameCGDiscoveryIntervalMs = 250;
-    if (g_unified_ui.last_in_game_cg_overlay_refresh_tick != 0 &&
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.last_in_game_cg_discovery_processed_count;
+    constexpr ULONGLONG kInGameCGDiscoveryIntervalMs = 5000;
+    if (!layout_activity &&
+        g_unified_ui.last_in_game_cg_overlay_refresh_tick != 0 &&
         now - g_unified_ui.last_in_game_cg_overlay_refresh_tick <
             kInGameCGDiscoveryIntervalMs) {
         return;
     }
     g_unified_ui.last_in_game_cg_overlay_refresh_tick = now;
+    g_unified_ui.last_in_game_cg_discovery_processed_count =
+        g_unified_ui.processed_count;
     DiscoverInGameCGSurfaces(g_unified_ui.primary_root);
     // Discovery may have retained the notice for the first time in this pass.
     refresh_caption();
@@ -4365,6 +4388,10 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     if (!original || !self) {
         return;
     }
+    // A single move callback performs many ancestry and signature checks on
+    // the same GUI heap. Share VirtualQuery results only within this callback;
+    // the cache is discarded before returning to the game.
+    GuiObjectReadBatch read_batch;
 
     auto* bytes = static_cast<unsigned char*>(self);
     void* immediate_call = static_cast<unsigned char*>(_ReturnAddress()) - 5;

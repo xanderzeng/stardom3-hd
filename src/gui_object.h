@@ -4,6 +4,18 @@
 
 namespace stardom {
 
+// Reuses VirtualQuery results only during one synchronous GUI traversal. The
+// cache is discarded before returning to game code, where the GUI pool may be
+// changed or released.
+class GuiObjectReadBatch {
+public:
+    GuiObjectReadBatch();
+    ~GuiObjectReadBatch();
+
+    GuiObjectReadBatch(const GuiObjectReadBatch&) = delete;
+    GuiObjectReadBatch& operator=(const GuiObjectReadBatch&) = delete;
+};
+
 struct GuiObjectField {
     static constexpr size_t x = 0x80;
     static constexpr size_t y = 0x84;
