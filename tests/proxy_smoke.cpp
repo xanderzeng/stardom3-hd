@@ -11,26 +11,28 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2 && argc != 4 && argc != 6) {
+    if (argc != 2 && argc != 4 && argc != 6 && argc != 7) {
         std::fwprintf(stderr,
             L"usage: proxy_smoke <d3d9.dll> [expected-client-width expected-client-height]\n"
-            L"       proxy_smoke <d3d9.dll> <config-width> <config-height> <expected-client-width> <expected-client-height>\n"
+            L"       proxy_smoke <d3d9.dll> <config-width> <config-height> <expected-client-width> <expected-client-height> [borderless]\n"
             L"       use -1 -1 to require an unchanged client area\n");
         return 2;
     }
 
-    const int expected_index = argc == 6 ? 4 : 2;
+    const bool staged_config = argc >= 6;
+    const int expected_index = staged_config ? 4 : 2;
     const long expected_width = argc >= 4 ?
         std::wcstol(argv[expected_index], nullptr, 10) : 1920;
     const long expected_height = argc >= 4 ?
         std::wcstol(argv[expected_index + 1], nullptr, 10) : 1080;
+    const bool borderless = argc == 7 && std::wcstol(argv[6], nullptr, 10) != 0;
 
     wchar_t staged_directory[MAX_PATH]{};
     wchar_t staged_dll[MAX_PATH]{};
     wchar_t staged_ini[MAX_PATH]{};
     wchar_t staged_log[MAX_PATH]{};
     const wchar_t* dll_path = argv[1];
-    if (argc == 6) {
+    if (staged_config) {
         wchar_t temporary_root[MAX_PATH]{};
         if (!GetTempPathW(MAX_PATH, temporary_root)) {
             std::fwprintf(stderr, L"GetTempPath failed: %lu\n", GetLastError());
@@ -63,6 +65,8 @@ int wmain(int argc, wchar_t** argv) {
             WritePrivateProfileStringW(
                 L"Widescreen", L"Height", argv[3], staged_ini);
         }
+        WritePrivateProfileStringW(L"Widescreen", L"Borderless",
+                                   borderless ? L"1" : L"0", staged_ini);
         dll_path = staged_dll;
     }
 
@@ -118,6 +122,7 @@ int wmain(int argc, wchar_t** argv) {
                                              &parameters, &device);
     RECT client{};
     GetClientRect(window, &client);
+    const LONG_PTR final_style = GetWindowLongPtrW(window, GWL_STYLE);
     std::printf("result=0x%08lX backbuffer=%ux%u client=%ldx%ld\n",
                 static_cast<unsigned long>(result), parameters.BackBufferWidth,
                 parameters.BackBufferHeight, client.right, client.bottom);
@@ -130,7 +135,7 @@ int wmain(int argc, wchar_t** argv) {
     UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
     FreeLibrary(proxy);
 
-    if (argc == 6) {
+    if (staged_config) {
         DeleteFileW(staged_log);
         DeleteFileW(staged_ini);
         DeleteFileW(staged_dll);
@@ -147,5 +152,10 @@ int wmain(int argc, wchar_t** argv) {
     // intercepted CreateDevice. A real device is checked during game QA.
     const bool device_ok = FAILED(result) || expect_unchanged ||
         (parameters.BackBufferWidth == 800 && parameters.BackBufferHeight == 600);
-    return patched && device_ok ? 0 : 8;
+    // When the proxy resizes the window it must also drop the sizing frame and
+    // maximize box so Aero Snap cannot maximize the fixed-backbuffer window
+    // (dragging the title bar to the top edge otherwise crashes the game).
+    const bool style_ok = expect_unchanged ||
+        (final_style & (WS_THICKFRAME | WS_MAXIMIZEBOX)) == 0;
+    return patched && device_ok && style_ok ? 0 : 8;
 }

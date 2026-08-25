@@ -78,20 +78,64 @@ void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
         return;
     }
 
+    DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+    DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+
+    // The proxy always presents a fixed-size backbuffer, so the OS window has to
+    // stay a fixed size. Windows Aero Snap otherwise maximizes a
+    // resizable/maximizable window when its title bar is dragged to the top
+    // screen edge; that resize desynchronizes the window from the fixed
+    // backbuffer and crashes the game (for example a 1920x1080 window on a
+    // 1920x1080 monitor). Drop the sizing frame and maximize box in every mode,
+    // which also disables the snap-to-top gesture and border-drag resizing.
+    style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+
     if (borderless) {
-        SetWindowLongPtrW(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowLongPtrW(window, GWL_EXSTYLE, WS_EX_APPWINDOW);
-        SetWindowPos(window, nullptr, 0, 0, static_cast<int>(width), static_cast<int>(height),
-                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        return;
+        // Additionally strip the caption/border decorations while keeping every
+        // other style bit the game and D3D9 already rely on (WS_VISIBLE,
+        // WS_CLIPSIBLINGS, WS_CLIPCHILDREN, the game's own flags, ...).
+        // Replacing the whole style with WS_POPUP|WS_VISIBLE discarded those
+        // bits on the live device window and made borderless startup fail.
+        constexpr DWORD kFrameStyle = WS_CAPTION | WS_BORDER | WS_DLGFRAME |
+                                      WS_MINIMIZEBOX | WS_SYSMENU;
+        constexpr DWORD kFrameExStyle = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                                        WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
+        style &= ~kFrameStyle;
+        ex_style &= ~kFrameExStyle;
     }
 
-    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
-    const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+    SetWindowLongPtrW(window, GWL_STYLE, style);
+    SetWindowLongPtrW(window, GWL_EXSTYLE, ex_style);
+
     RECT rect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
     AdjustWindowRectEx(&rect, style, GetMenu(window) != nullptr, ex_style);
-    SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    const int window_width = rect.right - rect.left;
+    const int window_height = rect.bottom - rect.top;
+
+    // Center the resized window inside the monitor's work area and clamp the top
+    // edge so the title bar stays reachable. The old SWP_NOMOVE kept the game's
+    // original small-window origin, which pushed the enlarged window off-screen
+    // and forced the user to drag it toward the top edge (the crash trigger).
+    int x = 0;
+    int y = 0;
+    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info{};
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (monitor && GetMonitorInfoW(monitor, &monitor_info)) {
+        const RECT& work = monitor_info.rcWork;
+        const int work_width = work.right - work.left;
+        const int work_height = work.bottom - work.top;
+        x = work.left + (work_width - window_width) / 2;
+        y = work.top + (work_height - window_height) / 2;
+        if (x < work.left) {
+            x = work.left;
+        }
+        if (y < work.top) {
+            y = work.top;
+        }
+    }
+    SetWindowPos(window, nullptr, x, y, window_width, window_height,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
 bool LoadSystemD3D9() {

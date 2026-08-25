@@ -85,6 +85,8 @@ add_test(NAME proxy_16_9
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1280 720 1280 720)
 add_test(NAME proxy_4_3
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1024 768 1024 768)
+add_test(NAME proxy_borderless
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080 1)
 add_test(NAME proxy_invalid_resolution
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1366 768 -1 -1)
 add_test(NAME proxy_negative_resolution
