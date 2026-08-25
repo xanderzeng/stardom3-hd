@@ -73,24 +73,24 @@ void ClearScheduleHighlightCache() {
     g_unified_ui.last_schedule_hover_row = -2;
 }
 
-bool FindScheduleHighlightRows() {
+void* FindScheduleHighlightRows(void* start_page, size_t maximum_pages) {
     GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(g_unified_ui.primary_root)) {
         ClearScheduleHighlightCache();
-        return false;
+        return nullptr;
     }
 
     auto* primary_bytes =
         static_cast<unsigned char*>(g_unified_ui.primary_root);
-    void* page = *reinterpret_cast<void**>(primary_bytes + 0xF4);
+    void* page = start_page ? start_page :
+        *reinterpret_cast<void**>(primary_bytes + 0xF4);
     size_t page_count = 0;
-    while (CanReadGuiObject(page) && page_count++ < 4096) {
+    while (CanReadGuiObject(page) && page_count++ < maximum_pages) {
         auto* page_bytes = static_cast<unsigned char*>(page);
         const int page_width = *reinterpret_cast<int*>(page_bytes + 0x88);
         const int page_height = *reinterpret_cast<int*>(page_bytes + 0x8C);
-        const bool page_visible = *(page_bytes + 0x99) != 0;
         void* inner = *reinterpret_cast<void**>(page_bytes + 0xF4);
-        if (page_visible && page_width >= 798 && page_width <= 804 &&
+        if (page_width >= 798 && page_width <= 804 &&
             page_height >= 598 && page_height <= 604 &&
             CanReadGuiObject(inner)) {
             auto* inner_bytes = static_cast<unsigned char*>(inner);
@@ -123,15 +123,15 @@ bool FindScheduleHighlightRows() {
                     std::copy(std::begin(rows), std::end(rows),
                               std::begin(g_unified_ui.schedule_highlight_rows));
                     Log("Unified UI schedule hover rows discovered page=%p", page);
-                    return true;
+                    return nullptr;
                 }
             }
         }
         page = *reinterpret_cast<void**>(page_bytes + 0xF8);
     }
 
-    ClearScheduleHighlightCache();
-    return false;
+    return page_count >= maximum_pages && CanReadGuiObject(page) ?
+        page : nullptr;
 }
 
 void UpdateScheduleDateHover(IDirect3DDevice9* device) {
@@ -147,30 +147,54 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
     g_unified_ui.last_schedule_hover_tick = now;
 
     if (!CanReadGuiObject(g_unified_ui.schedule_root)) {
-        // A missing schedule page used to trigger a complete primary-root
-        // scan from every draw hook. Retry slowly while the page is absent so
-        // a newly opened page is found within a bounded delay without charging
-        // thousands of VirtualQuery calls to every frame.
+        // Construction/move activity starts discovery immediately. A bounded
+        // fallback cycle covers visibility-only changes without scanning all
+        // 4096 root children in one frame.
         const bool layout_activity = g_unified_ui.processed_count !=
-            g_unified_ui.last_schedule_discovery_processed_count;
-        constexpr ULONGLONG kScheduleDiscoveryIntervalMs = 5000;
-        if (!layout_activity &&
-            g_unified_ui.last_schedule_discovery_tick != 0 &&
-            now - g_unified_ui.last_schedule_discovery_tick <
-                kScheduleDiscoveryIntervalMs) {
+            g_unified_ui.schedule_discovery_processed_count;
+        if (g_unified_ui.schedule_discovery_root !=
+                g_unified_ui.primary_root) {
+            g_unified_ui.schedule_discovery_root =
+                g_unified_ui.primary_root;
+            g_unified_ui.schedule_discovery_cursor = nullptr;
+            g_unified_ui.schedule_discovery_active = false;
+        }
+        constexpr ULONGLONG kScheduleDiscoveryCycleIntervalMs = 500;
+        if (!g_unified_ui.schedule_discovery_active &&
+            (layout_activity ||
+             g_unified_ui.last_schedule_discovery_cycle_tick == 0 ||
+             now - g_unified_ui.last_schedule_discovery_cycle_tick >=
+                 kScheduleDiscoveryCycleIntervalMs)) {
+            g_unified_ui.schedule_discovery_active = true;
+            g_unified_ui.schedule_discovery_cursor = nullptr;
+            g_unified_ui.schedule_discovery_processed_count =
+                g_unified_ui.processed_count;
+        }
+        if (!g_unified_ui.schedule_discovery_active) {
             return;
         }
-        g_unified_ui.last_schedule_discovery_tick = now;
-        g_unified_ui.last_schedule_discovery_processed_count =
-            g_unified_ui.processed_count;
-        if (!FindScheduleHighlightRows()) {
+        constexpr size_t kScheduleDiscoveryPagesPerFrame = 512;
+        g_unified_ui.schedule_discovery_cursor = FindScheduleHighlightRows(
+            g_unified_ui.schedule_discovery_cursor,
+            kScheduleDiscoveryPagesPerFrame);
+        if (CanReadGuiObject(g_unified_ui.schedule_root)) {
+            g_unified_ui.schedule_discovery_active = false;
+        } else if (!g_unified_ui.schedule_discovery_cursor) {
+            g_unified_ui.schedule_discovery_active = false;
+            g_unified_ui.last_schedule_discovery_cycle_tick = now;
+            return;
+        }
+        if (!CanReadGuiObject(g_unified_ui.schedule_root)) {
             return;
         }
     }
 
     auto* page_bytes = static_cast<unsigned char*>(g_unified_ui.schedule_root);
     if (*(page_bytes + 0x99) == 0) {
-        ClearScheduleHighlightCache();
+        // Retain the structurally verified hidden page. When the game toggles
+        // visibility directly, hover handling becomes active next frame with
+        // no discovery scan or construction event required.
+        g_unified_ui.last_schedule_hover_row = -2;
         return;
     }
 
@@ -256,10 +280,26 @@ void RunFirstDrawMaintenance() {
     }
     g_device_hook.first_draw_maintenance_done = true;
 
+    // Some notification controls finish their font-animation setup after
+    // BeginScene. Discovering and reflowing the whole subtree there overwrites
+    // that one-shot initialization. Advance discovery here instead: controller
+    // updates are complete, while no UI primitive has been submitted yet.
+    if (!g_unified_ui.announcement_active) {
+        constexpr size_t kAnnouncementDiscoveryNodesPerFrame = 512;
+        if (DiscoverAnnouncementScreenIncremental(
+                kAnnouncementDiscoveryNodesPerFrame)) {
+            RefreshUnifiedUILayoutNow();
+            Log("Unified UI announcement activated before first draw");
+        }
+    }
+
     // Some GUI controllers write their authored coordinates after BeginScene.
     // Preserve the pre-draw correction, but run it once for the frame rather
     // than once for every submitted primitive.
-    RefreshInGameCGOverlays();
+    // The game can rewrite retained overlay positions after BeginScene, so
+    // correct those objects again before the first draw. Surface discovery is
+    // budgeted once per frame in HookBeginScene and must not advance twice.
+    RefreshInGameCGOverlays(false);
     g_device_hook.in_game_cg_visible_this_frame = IsInGameCGVisible();
 }
 
@@ -342,23 +382,16 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         return g_device_hook.original_set_viewport(device, viewport);
     }
 
-    // Ordinary maintenance is intentionally low-frequency, but announcement
-    // pages must be identified before their first legacy viewport is applied;
-    // otherwise one native 800x600 frame remains visible for up to a second.
-    // Probe only at this viewport transition and rate-limit failed probes so
-    // ordinary pages never pay for a control-tree scan on every draw call.
+    // Advance at most one bounded discovery chunk at this viewport transition.
+    // Construction activity starts a cycle immediately; visibility-only page
+    // changes use the short fallback cycle without scanning 4096 nodes at once.
     if (!g_unified_ui.announcement_active) {
         const ULONGLONG now = GetTickCount64();
-        const bool layout_activity = g_unified_ui.processed_count !=
-            g_device_hook.last_announcement_probe_processed_count;
-        constexpr ULONGLONG kAnnouncementProbeIntervalMs = 5000;
-        if (layout_activity ||
-            now - g_device_hook.last_announcement_probe_tick >=
-                kAnnouncementProbeIntervalMs) {
-            g_device_hook.last_announcement_probe_tick = now;
-            g_device_hook.last_announcement_probe_processed_count =
-                g_unified_ui.processed_count;
-            if (IsAnnouncementScreenVisible()) {
+        if (now != g_device_hook.last_announcement_probe_advance_tick) {
+            g_device_hook.last_announcement_probe_advance_tick = now;
+            constexpr size_t kAnnouncementDiscoveryNodesPerStep = 512;
+            if (DiscoverAnnouncementScreenIncremental(
+                    kAnnouncementDiscoveryNodesPerStep)) {
                 RefreshUnifiedUILayoutNow();
                 Log("Unified UI announcement activated before first viewport");
             }

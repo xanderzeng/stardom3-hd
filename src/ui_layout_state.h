@@ -36,8 +36,11 @@ struct LayoutContext {
     void* schedule_root = nullptr;
     void* schedule_highlight_rows[7]{};
     ULONGLONG last_schedule_hover_tick = 0;
-    ULONGLONG last_schedule_discovery_tick = 0;
-    size_t last_schedule_discovery_processed_count = 0;
+    void* schedule_discovery_root = nullptr;
+    void* schedule_discovery_cursor = nullptr;
+    ULONGLONG last_schedule_discovery_cycle_tick = 0;
+    size_t schedule_discovery_processed_count = 0;
+    bool schedule_discovery_active = false;
     int last_schedule_hover_row = -2;
     void* photo_album_root = nullptr;
     bool photo_album_viewport_logged = false;
@@ -64,8 +67,11 @@ struct LayoutContext {
     bool in_game_cg_logged = false;
     bool in_game_cg_caption_logged = false;
     bool in_game_cg_item_notice_logged = false;
-    ULONGLONG last_in_game_cg_overlay_refresh_tick = 0;
-    size_t last_in_game_cg_discovery_processed_count = 0;
+    void* in_game_cg_discovery_root = nullptr;
+    void* in_game_cg_discovery_cursor = nullptr;
+    ULONGLONG last_in_game_cg_discovery_cycle_tick = 0;
+    size_t in_game_cg_discovery_processed_count = 0;
+    bool in_game_cg_discovery_active = false;
     struct InGameCGNativeOverlay {
         void* object = nullptr;
         int native_x = 0;
@@ -84,6 +90,11 @@ struct LayoutContext {
     } toolbar_sequences[4]{};
     int toolbar_width = 320;
     void* trampoline = nullptr;
+    void* announcement_discovery_root = nullptr;
+    void* announcement_discovery_cursor = nullptr;
+    ULONGLONG last_announcement_discovery_cycle_tick = 0;
+    size_t announcement_discovery_processed_count = 0;
+    bool announcement_discovery_active = false;
     bool announcement_active = false;
     bool installed = false;
 };

@@ -1183,9 +1183,9 @@ bool IsInGameCGRoot(void* object, void* parent, int width, int height) {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(object);
-    if (*(bytes + 0x99) == 0) {
-        return false;
-    }
+    // Cache this structurally unique page even while hidden. Visibility is
+    // checked separately every frame, so the first CG can activate without
+    // waiting for another discovery cycle.
     void* first = *reinterpret_cast<void**>(bytes + 0xF4);
     if (!CanReadGuiObject(first)) {
         return false;
@@ -1360,10 +1360,11 @@ RegisterInGameCGNativeOverlay(void* object, int native_x, int native_y,
     return free_slot;
 }
 
-void DiscoverInGameCGSurfaces(void* root) {
+void* DiscoverInGameCGSurfaces(void* root, void* start_child = nullptr,
+                               size_t maximum_nodes = 4096) {
     GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(root)) {
-        return;
+        return nullptr;
     }
     void* visible_cg = IsInGameCGVisible() ?
         g_unified_ui.in_game_cg_root : nullptr;
@@ -1372,10 +1373,10 @@ void DiscoverInGameCGSurfaces(void* root) {
     int caption_native_y = 342;
     int item_notice_native_x = 0;
     int item_notice_native_y = 316;
-    void* child = *reinterpret_cast<void**>(
+    void* child = start_child ? start_child : *reinterpret_cast<void**>(
         static_cast<unsigned char*>(root) + 0xF4);
     size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 4096) {
+    while (CanReadGuiObject(child) && visited++ < maximum_nodes) {
         auto* bytes = static_cast<unsigned char*>(child);
         const int x = *reinterpret_cast<int*>(bytes + 0x80);
         const int y = *reinterpret_cast<int*>(bytes + 0x84);
@@ -1425,6 +1426,11 @@ void DiscoverInGameCGSurfaces(void* root) {
             g_unified_ui.in_game_cg_item_notice_logged = false;
         }
     }
+    // A non-null result resumes at the next unvisited sibling next frame. At
+    // the end (or after an invalidated list node), restart from the root on the
+    // following frame so visibility-only changes are discovered promptly.
+    return visited >= maximum_nodes && CanReadGuiObject(child) ?
+        child : nullptr;
 }
 
 void LayoutInGameCGRoot(void* object) {
@@ -3097,21 +3103,25 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
         auto* child_bytes = static_cast<unsigned char*>(child);
         const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
         const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
-        const bool caption = native_canvas
-            ? child_width >= 140 && child_width <= 150 &&
-                child_height >= 18 && child_height <= 22
-            : std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
-                std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2;
+        // A pooled announcement root can be restored to 800x600 before the
+        // game restores all of its children. Accept either coordinate space
+        // independently so the retained native-geometry cache can repair that
+        // mixed state instead of treating scaled children as new native data.
+        const bool caption =
+            (child_width >= 140 && child_width <= 150 &&
+             child_height >= 18 && child_height <= 22) ||
+            (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2);
         if (caption) {
             ++captions;
         }
         // Result-card positions are recomputed for every artist count. Their
         // authored size is the stable part of the RunSchedule signature.
-        const bool result_card = native_canvas
-            ? child_width >= 95 && child_width <= 105 &&
-                child_height >= 115 && child_height <= 125
-            : std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
-                std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2;
+        const bool result_card =
+            (child_width >= 95 && child_width <= 105 &&
+             child_height >= 115 && child_height <= 125) ||
+            (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2);
         if (result_card) {
             ++result_cards;
         }
@@ -3139,8 +3149,11 @@ bool IsCachedAnnouncementRootValid() {
         viewport_x, viewport_y, viewport_width, viewport_height);
     const int width = *reinterpret_cast<int*>(bytes + 0x88);
     const int height = *reinterpret_cast<int*>(bytes + 0x8C);
-    if (std::abs(width - viewport_width) > 2 ||
-        std::abs(height - viewport_height) > 2) {
+    const bool native_canvas = width >= 790 && width <= 810 &&
+        height >= 590 && height <= 610;
+    const bool scaled_canvas = std::abs(width - viewport_width) <= 2 &&
+        std::abs(height - viewport_height) <= 2;
+    if (!native_canvas && !scaled_canvas) {
         return false;
     }
 
@@ -3152,15 +3165,19 @@ bool IsCachedAnnouncementRootValid() {
         auto* child_bytes = static_cast<unsigned char*>(child);
         const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
         const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
-        if (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
-            std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2) {
+        if ((child_width >= 140 && child_width <= 150 &&
+             child_height >= 18 && child_height <= 22) ||
+            (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2)) {
             ++captions;
         }
         // Do not validate the result-card position here. The game moves all
         // four cards after construction and the coordinates differ between
         // the one-, two-, three-, and four-artist arrangements.
-        if (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
-            std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2) {
+        if ((child_width >= 95 && child_width <= 105 &&
+             child_height >= 115 && child_height <= 125) ||
+            (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2)) {
             ++result_cards;
         }
         ++count;
@@ -3169,32 +3186,91 @@ bool IsCachedAnnouncementRootValid() {
     return child == nullptr && captions == 4 && result_cards == 4;
 }
 
-bool IsAnnouncementScreenVisible() {
-    if (IsCachedAnnouncementRootValid()) {
-        return *(static_cast<unsigned char*>(g_announcement_root) +
-            0x99) != 0;
-    }
-    if (g_announcement_root) {
+void* FindAnnouncementRoot(void* start_child, size_t maximum_nodes,
+                           bool& found) {
+    found = false;
+    if (g_announcement_root &&
+        (!CanReadGuiObject(g_announcement_root) ||
+         *reinterpret_cast<void**>(
+             static_cast<unsigned char*>(g_announcement_root) + 0xF0) !=
+             g_unified_ui.primary_root)) {
         g_announcement_root = nullptr;
         g_announcement_geometry_count = 0;
         g_announcement_artist_count = 0;
     }
     if (!CanReadGuiObject(g_unified_ui.primary_root)) {
-        return false;
+        return nullptr;
     }
     auto* root_bytes = static_cast<unsigned char*>(g_unified_ui.primary_root);
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = start_child ? start_child :
+        *reinterpret_cast<void**>(root_bytes + 0xF4);
     size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 4096) {
+    while (CanReadGuiObject(child) && visited++ < maximum_nodes) {
         auto* child_bytes = static_cast<unsigned char*>(child);
         const int width = *reinterpret_cast<int*>(child_bytes + 0x88);
         const int height = *reinterpret_cast<int*>(child_bytes + 0x8C);
         if (IsAnnouncementControlRoot(child, g_unified_ui.primary_root,
                                       width, height)) {
             ResetAnnouncementGeometry(child);
-            return true;
+            found = true;
+            return nullptr;
         }
         child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    }
+    return visited >= maximum_nodes && CanReadGuiObject(child) ?
+        child : nullptr;
+}
+
+bool DiscoverAnnouncementScreenIncremental(size_t maximum_nodes) {
+    if (IsCachedAnnouncementRootValid() &&
+        *(static_cast<unsigned char*>(g_announcement_root) + 0x99) != 0) {
+        return true;
+    }
+    if (!CanReadGuiObject(g_unified_ui.primary_root)) {
+        return false;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.announcement_discovery_processed_count;
+    if (g_unified_ui.announcement_discovery_root !=
+            g_unified_ui.primary_root) {
+        g_unified_ui.announcement_discovery_root =
+            g_unified_ui.primary_root;
+        g_unified_ui.announcement_discovery_cursor = nullptr;
+        g_unified_ui.announcement_discovery_active = false;
+    }
+    constexpr ULONGLONG kAnnouncementDiscoveryCycleIntervalMs = 250;
+    if (!g_unified_ui.announcement_discovery_active &&
+        (layout_activity ||
+         g_unified_ui.last_announcement_discovery_cycle_tick == 0 ||
+         now - g_unified_ui.last_announcement_discovery_cycle_tick >=
+             kAnnouncementDiscoveryCycleIntervalMs)) {
+        g_unified_ui.announcement_discovery_active = true;
+        g_unified_ui.announcement_discovery_cursor = nullptr;
+        g_unified_ui.announcement_discovery_processed_count =
+            g_unified_ui.processed_count;
+    }
+    if (!g_unified_ui.announcement_discovery_active) {
+        return false;
+    }
+
+    bool found = false;
+    g_unified_ui.announcement_discovery_cursor = FindAnnouncementRoot(
+        g_unified_ui.announcement_discovery_cursor, maximum_nodes, found);
+    // FindAnnouncementRoot identifies the page while it still has its native
+    // 800x600 geometry. IsCachedAnnouncementRootValid intentionally expects
+    // the already aspect-fitted geometry, so using it here rejects a genuine
+    // first discovery and leaves the page broken until the rare full-layout
+    // integrity pass. Let the caller perform that initial fit first.
+    if (found) {
+        g_unified_ui.announcement_discovery_active = false;
+        return *(static_cast<unsigned char*>(g_announcement_root) +
+            0x99) != 0;
+    }
+    if (!g_unified_ui.announcement_discovery_cursor) {
+        g_unified_ui.announcement_discovery_active = false;
+        g_unified_ui.last_announcement_discovery_cycle_tick = now;
     }
     return false;
 }
@@ -4237,6 +4313,16 @@ void RefreshUnifiedUILayout() {
     RefreshPhoneOverlayButton();
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
+    // Closing an already discovered announcement is a direct visibility-byte
+    // change and may not produce GuiMove activity. Retire the active render
+    // path immediately using the retained root instead of waiting for the
+    // rare full-layout integrity pass.
+    if (g_unified_ui.announcement_active &&
+        (!CanReadGuiObject(g_announcement_root) ||
+         *(static_cast<unsigned char*>(g_announcement_root) + 0x99) == 0)) {
+        g_unified_ui.announcement_active = false;
+        Log("Unified UI announcement render layer active=0");
+    }
     // Before the title root is known, scan on the first draw submissions so
     // the page is aspect-fitted before its first visible frame. Once found,
     // return to the low-frequency maintenance pass used by ordinary screens.
@@ -4247,9 +4333,10 @@ void RefreshUnifiedUILayout() {
         g_unified_ui.last_refresh_processed_count;
     // GuiMove registers new objects as they are constructed, so topology
     // changes still trigger maintenance on the next frame. Once the layout is
-    // stable, keep only a sparse fallback scan instead of forcing a full-tree
-    // traversal every second.
-    constexpr ULONGLONG kStableLayoutRefreshIntervalMs = 5000;
+    // stable, retain only a rare integrity pass. Special controls that can
+    // change visibility without GuiMove use their own incremental discovery
+    // cycles and no longer depend on this full-tree fallback.
+    constexpr ULONGLONG kStableLayoutRefreshIntervalMs = 30000;
     if (!title_discovery_pending && !layout_activity &&
         now - g_unified_ui.last_refresh_tick <
             kStableLayoutRefreshIntervalMs) {
@@ -4260,7 +4347,8 @@ void RefreshUnifiedUILayout() {
     g_unified_ui.last_refresh_processed_count =
         g_unified_ui.processed_count;
 
-    const bool announcement_active = IsAnnouncementScreenVisible();
+    const bool announcement_active = IsCachedAnnouncementRootValid() &&
+        *(static_cast<unsigned char*>(g_announcement_root) + 0x99) != 0;
     if (announcement_active != g_unified_ui.announcement_active) {
         g_unified_ui.announcement_active = announcement_active;
         Log("Unified UI announcement render layer active=%d",
@@ -4276,7 +4364,7 @@ void RefreshUnifiedUILayoutNow() {
     RefreshUnifiedUILayout();
 }
 
-void RefreshInGameCGOverlays() {
+void RefreshInGameCGOverlays(bool discover_surfaces) {
     if (!g_unified_ui.installed ||
         !CanReadGuiObject(g_unified_ui.primary_root) ||
         !g_unified_ui.trampoline) {
@@ -4327,25 +4415,51 @@ void RefreshInGameCGOverlays() {
 
     // Once retained, correct the notice immediately at every UI submission.
     // The game writes its authored x=0 directly after BeginScene, bypassing
-    // HookGuiMove. This cheap one-object pass must therefore happen before the
-    // cross-frame discovery interval below. The expensive root scan remains
-    // rate-limited.
+    // HookGuiMove. This cheap one-object pass therefore runs both at
+    // BeginScene and before the first draw. Only BeginScene advances the
+    // budgeted discovery cursor below.
     refresh_caption();
     refresh_status_notice();
-    const ULONGLONG now = GetTickCount64();
-    const bool layout_activity = g_unified_ui.processed_count !=
-        g_unified_ui.last_in_game_cg_discovery_processed_count;
-    constexpr ULONGLONG kInGameCGDiscoveryIntervalMs = 5000;
-    if (!layout_activity &&
-        g_unified_ui.last_in_game_cg_overlay_refresh_tick != 0 &&
-        now - g_unified_ui.last_in_game_cg_overlay_refresh_tick <
-            kInGameCGDiscoveryIntervalMs) {
+    if (!discover_surfaces) {
         return;
     }
-    g_unified_ui.last_in_game_cg_overlay_refresh_tick = now;
-    g_unified_ui.last_in_game_cg_discovery_processed_count =
-        g_unified_ui.processed_count;
-    DiscoverInGameCGSurfaces(g_unified_ui.primary_root);
+    if (g_unified_ui.in_game_cg_discovery_root !=
+            g_unified_ui.primary_root) {
+        g_unified_ui.in_game_cg_discovery_root =
+            g_unified_ui.primary_root;
+        g_unified_ui.in_game_cg_discovery_cursor = nullptr;
+        g_unified_ui.in_game_cg_discovery_active = false;
+    }
+    const ULONGLONG now = GetTickCount64();
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.in_game_cg_discovery_processed_count;
+    // Visibility can change without a GuiMove callback. Start immediately on
+    // construction activity and otherwise leave a short pause between full
+    // incremental cycles so the fallback remains responsive but bounded.
+    constexpr ULONGLONG kInGameCGDiscoveryCycleIntervalMs = 100;
+    if (!g_unified_ui.in_game_cg_discovery_active &&
+        (layout_activity ||
+         g_unified_ui.last_in_game_cg_discovery_cycle_tick == 0 ||
+         now - g_unified_ui.last_in_game_cg_discovery_cycle_tick >=
+             kInGameCGDiscoveryCycleIntervalMs)) {
+        g_unified_ui.in_game_cg_discovery_active = true;
+        g_unified_ui.in_game_cg_discovery_cursor = nullptr;
+        g_unified_ui.in_game_cg_discovery_processed_count =
+            g_unified_ui.processed_count;
+    }
+    if (g_unified_ui.in_game_cg_discovery_active) {
+        // 512 nodes keeps the worst-case 4096-node root list within eight
+        // frames while spreading the former one-frame spike.
+        constexpr size_t kInGameCGDiscoveryNodesPerFrame = 512;
+        g_unified_ui.in_game_cg_discovery_cursor = DiscoverInGameCGSurfaces(
+            g_unified_ui.primary_root,
+            g_unified_ui.in_game_cg_discovery_cursor,
+            kInGameCGDiscoveryNodesPerFrame);
+        if (!g_unified_ui.in_game_cg_discovery_cursor) {
+            g_unified_ui.in_game_cg_discovery_active = false;
+            g_unified_ui.last_in_game_cg_discovery_cycle_tick = now;
+        }
+    }
     // Discovery may have retained the notice for the first time in this pass.
     refresh_caption();
     refresh_status_notice();

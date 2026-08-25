@@ -50,8 +50,7 @@ struct DeviceHookState {
     bool studio_event_list_this_frame = false;
     bool in_game_cg_visible_this_frame = false;
     bool title_transition_mask_logged = false;
-    ULONGLONG last_announcement_probe_tick = 0;
-    size_t last_announcement_probe_processed_count = 0;
+    ULONGLONG last_announcement_probe_advance_tick = 0;
     UINT active_target_width = 0;
     UINT active_target_height = 0;
     IDirect3DSurface9* main_target_surface = nullptr;
