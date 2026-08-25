@@ -29,6 +29,7 @@ struct LayoutContext {
     void* schedule_root = nullptr;
     void* schedule_highlight_rows[7]{};
     ULONGLONG last_schedule_hover_tick = 0;
+    ULONGLONG last_schedule_discovery_tick = 0;
     int last_schedule_hover_row = -2;
     void* photo_album_root = nullptr;
     bool photo_album_viewport_logged = false;

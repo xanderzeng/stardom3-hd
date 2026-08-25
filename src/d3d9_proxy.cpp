@@ -72,6 +72,63 @@ bool IsDebugModeEnabled() {
     return g_debug_mode;
 }
 
+constexpr wchar_t kOriginalWindowProcProperty[] =
+    L"Stardom3.Widescreen.OriginalWindowProc";
+
+LRESULT CALLBACK CompatibilityWindowProc(HWND window, UINT message,
+                                         WPARAM wparam, LPARAM lparam) {
+    const auto original = reinterpret_cast<WNDPROC>(
+        GetPropW(window, kOriginalWindowProcProperty));
+
+    // The original fullscreen game does not have a Windows menu interaction.
+    // Once forced into windowed mode, DefWindowProc turns a standalone Alt key
+    // press into SC_KEYMENU and enters a modal menu loop, which stops the game
+    // from updating until another input dismisses it. Suppress only that system
+    // command so Alt combinations and every other window command still work.
+    if (message == WM_SYSCOMMAND &&
+        (wparam & 0xFFF0u) == SC_KEYMENU) {
+        return 0;
+    }
+
+    if (!original) {
+        return DefWindowProcW(window, message, wparam, lparam);
+    }
+
+    const LRESULT result = CallWindowProcW(original, window, message,
+                                           wparam, lparam);
+    if (message == WM_NCDESTROY) {
+        RemovePropW(window, kOriginalWindowProcProperty);
+    }
+    return result;
+}
+
+bool InstallWindowCompatibilityHook(HWND window) {
+    if (!window || !IsWindow(window)) {
+        return false;
+    }
+    if (GetPropW(window, kOriginalWindowProcProperty)) {
+        return true;
+    }
+
+    const auto original = reinterpret_cast<WNDPROC>(
+        GetWindowLongPtrW(window, GWLP_WNDPROC));
+    if (!original ||
+        !SetPropW(window, kOriginalWindowProcProperty,
+                  reinterpret_cast<HANDLE>(original))) {
+        return false;
+    }
+
+    SetLastError(ERROR_SUCCESS);
+    const LONG_PTR previous = SetWindowLongPtrW(
+        window, GWLP_WNDPROC,
+        reinterpret_cast<LONG_PTR>(&CompatibilityWindowProc));
+    if (!previous && GetLastError() != ERROR_SUCCESS) {
+        RemovePropW(window, kOriginalWindowProcProperty);
+        return false;
+    }
+    return true;
+}
+
 
 void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
     if (!window || !IsWindow(window)) {
@@ -242,6 +299,10 @@ public:
 
         HWND target_window = patched.hDeviceWindow ? patched.hDeviceWindow : focus_window;
         ResizeClientArea(target_window, output_width, output_height, config.borderless);
+        if (!InstallWindowCompatibilityHook(target_window)) {
+            Log("Failed to install window compatibility hook (error=%lu)",
+                GetLastError());
+        }
 
         Log("CreateDevice: requested=%ux%u windowed=%d, patched backbuffer=%ux%u client=%ux%u native=%d borderless=%d debug=%d",
             original_width, original_height, parameters->Windowed,

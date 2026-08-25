@@ -3453,8 +3453,8 @@ void ResizeToolbarBackground(void* object, int width, int height) {
 }
 
 void RefreshToolbarSlots(ULONGLONG now) {
-    // RefreshUnifiedUILayout is reached from several draw hooks. Limit this
-    // retained seven-child check to roughly once per rendered frame.
+    // Keep this retained seven-child check rate-limited in case another
+    // immediate layout refresh happens during the same frame.
     constexpr ULONGLONG kToolbarSlotRefreshIntervalMs = 8;
     if (now - g_toolbar_last_slot_refresh_tick <
             kToolbarSlotRefreshIntervalMs ||
@@ -4310,12 +4310,15 @@ void RefreshInGameCGOverlays() {
     // Once retained, correct the notice immediately at every UI submission.
     // The game writes its authored x=0 directly after BeginScene, bypassing
     // HookGuiMove. This cheap one-object pass must therefore happen before the
-    // same-millisecond discovery throttle below. The expensive root scan
-    // remains rate-limited.
+    // cross-frame discovery interval below. The expensive root scan remains
+    // rate-limited.
     refresh_caption();
     refresh_status_notice();
     const ULONGLONG now = GetTickCount64();
-    if (now == g_unified_ui.last_in_game_cg_overlay_refresh_tick) {
+    constexpr ULONGLONG kInGameCGDiscoveryIntervalMs = 250;
+    if (g_unified_ui.last_in_game_cg_overlay_refresh_tick != 0 &&
+        now - g_unified_ui.last_in_game_cg_overlay_refresh_tick <
+            kInGameCGDiscoveryIntervalMs) {
         return;
     }
     g_unified_ui.last_in_game_cg_overlay_refresh_tick = now;

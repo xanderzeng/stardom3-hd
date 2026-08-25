@@ -6,7 +6,14 @@
 
 using Direct3DCreate9Fn = IDirect3D9* (WINAPI*)(UINT);
 
+int g_key_menu_messages = 0;
+
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_SYSCOMMAND &&
+        (wparam & 0xFFF0u) == SC_KEYMENU) {
+        ++g_key_menu_messages;
+        return 0;
+    }
     return DefWindowProcW(window, message, wparam, lparam);
 }
 
@@ -123,6 +130,7 @@ int wmain(int argc, wchar_t** argv) {
     RECT client{};
     GetClientRect(window, &client);
     const LONG_PTR final_style = GetWindowLongPtrW(window, GWL_STYLE);
+    SendMessageW(window, WM_SYSCOMMAND, SC_KEYMENU, 0);
     std::printf("result=0x%08lX backbuffer=%ux%u client=%ldx%ld\n",
                 static_cast<unsigned long>(result), parameters.BackBufferWidth,
                 parameters.BackBufferHeight, client.right, client.bottom);
@@ -157,5 +165,9 @@ int wmain(int argc, wchar_t** argv) {
     // (dragging the title bar to the top edge otherwise crashes the game).
     const bool style_ok = expect_unchanged ||
         (final_style & (WS_THICKFRAME | WS_MAXIMIZEBOX)) == 0;
-    return patched && device_ok && style_ok ? 0 : 8;
+    // Valid patched modes must suppress the standalone-Alt system menu command.
+    // Invalid configurations leave the original window procedure untouched.
+    const bool key_menu_ok = expect_unchanged ?
+        g_key_menu_messages == 1 : g_key_menu_messages == 0;
+    return patched && device_ok && style_ok && key_menu_ok ? 0 : 8;
 }

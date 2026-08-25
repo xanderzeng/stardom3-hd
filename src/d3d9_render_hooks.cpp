@@ -144,9 +144,21 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
     }
     g_unified_ui.last_schedule_hover_tick = now;
 
-    if (!CanReadGuiObject(g_unified_ui.schedule_root) &&
-        !FindScheduleHighlightRows()) {
-        return;
+    if (!CanReadGuiObject(g_unified_ui.schedule_root)) {
+        // A missing schedule page used to trigger a complete primary-root
+        // scan from every draw hook. Retry slowly while the page is absent so
+        // a newly opened page is found within a bounded delay without charging
+        // thousands of VirtualQuery calls to every frame.
+        constexpr ULONGLONG kScheduleDiscoveryIntervalMs = 1000;
+        if (g_unified_ui.last_schedule_discovery_tick != 0 &&
+            now - g_unified_ui.last_schedule_discovery_tick <
+                kScheduleDiscoveryIntervalMs) {
+            return;
+        }
+        g_unified_ui.last_schedule_discovery_tick = now;
+        if (!FindScheduleHighlightRows()) {
+            return;
+        }
     }
 
     auto* page_bytes = static_cast<unsigned char*>(g_unified_ui.schedule_root);
@@ -212,15 +224,36 @@ HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
     UpdatePhotoAlbumViewport(device);
     RefreshInGameCGOverlays();
     RefreshUnifiedUILayout();
+    g_device_hook.in_game_cg_visible_this_frame = IsInGameCGVisible();
+    g_device_hook.first_draw_maintenance_done = false;
     if (device == g_device_hook.device &&
         g_device_hook.original_begin_scene) {
         g_device_hook.title_pillarbox_cleared = false;
         g_device_hook.training_pillarbox_cleared = false;
         g_device_hook.loading_background_cleared = false;
+        g_device_hook.loading_page_this_frame = GetLoadingScreenRect(
+            g_device_hook.loading_rect_this_frame);
+        g_device_hook.title_page_this_frame =
+            IsTitleScreenVisible() || IsTitleTutorialVisible();
+        g_device_hook.studio_event_list_this_frame =
+            IsStudioEventListScreenVisible();
         g_device_hook.title_ready_before_draw = IsTitleScreenVisible();
         return g_device_hook.original_begin_scene(device);
     }
     return D3DERR_INVALIDCALL;
+}
+
+void RunFirstDrawMaintenance() {
+    if (g_device_hook.first_draw_maintenance_done) {
+        return;
+    }
+    g_device_hook.first_draw_maintenance_done = true;
+
+    // Some GUI controllers write their authored coordinates after BeginScene.
+    // Preserve the pre-draw correction, but run it once for the frame rather
+    // than once for every submitted primitive.
+    RefreshInGameCGOverlays();
+    g_device_hook.in_game_cg_visible_this_frame = IsInGameCGVisible();
 }
 
 HRESULT STDMETHODCALLTYPE HookSetRenderTarget(IDirect3DDevice9* device,
@@ -253,8 +286,6 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
     if (device != g_device_hook.device || !g_device_hook.original_set_viewport || !viewport) {
         return D3DERR_INVALIDCALL;
     }
-
-    RefreshUnifiedUILayout();
 
     // Dynamic map billboards render into off-screen surfaces which can have
     // exactly the same dimensions as the back buffer. Comparing dimensions
@@ -603,11 +634,11 @@ struct TitleScreenClipState {
 
 TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
     TitleScreenClipState state;
-    RECT loading_rect{};
-    const bool loading_page = GetLoadingScreenRect(loading_rect);
-    const bool title_page =
-        IsTitleScreenVisible() || IsTitleTutorialVisible();
-    const bool studio_event_list = IsStudioEventListScreenVisible();
+    const bool loading_page = g_device_hook.loading_page_this_frame;
+    const RECT loading_rect = g_device_hook.loading_rect_this_frame;
+    const bool title_page = g_device_hook.title_page_this_frame;
+    const bool studio_event_list =
+        g_device_hook.studio_event_list_this_frame;
     if (!device || !g_device_hook.active_target_is_main ||
         (!loading_page && !title_page && !studio_event_list)) {
         return state;
@@ -712,7 +743,8 @@ bool ClearInGameCGPillarboxBeforePrimitive(
     IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     UINT start_vertex, UINT primitive_count) {
     if (!device || !g_device_hook.active_target_is_main ||
-        !IsInGameCGVisible() || type != D3DPT_TRIANGLESTRIP ||
+        !g_device_hook.in_game_cg_visible_this_frame ||
+        type != D3DPT_TRIANGLESTRIP ||
         primitive_count != 2 || !IsPretransformedUI(device, nullptr)) {
         return false;
     }
@@ -821,15 +853,15 @@ bool CropToolbarBackgroundVertices(IDirect3DDevice9* device,
                                    std::vector<unsigned char>& cropped) {
     if (!device || type != D3DPT_TRIANGLESTRIP || primitive_count != 2 ||
         !vertices || stride < sizeof(float) * 4 ||
-        !g_device_hook.active_target_is_main ||
-        !IsPretransformedUI(device, nullptr)) {
+        !g_device_hook.active_target_is_main) {
         return false;
     }
 
     RECT toolbar_rect{};
     float texture_width_ratio = 1.0f;
     if (!GetToolbarBackgroundRenderRect(toolbar_rect,
-                                        texture_width_ratio)) {
+                                        texture_width_ratio) ||
+        !IsPretransformedUI(device, nullptr)) {
         return false;
     }
 
@@ -903,7 +935,14 @@ bool DrawCroppedToolbarBackgroundPrimitive(IDirect3DDevice9* device,
                                            UINT start_vertex,
                                            UINT primitive_count,
                                            HRESULT& result) {
-    if (!device || !g_device_hook.original_draw_primitive_up) {
+    if (!device || !g_device_hook.original_draw_primitive_up ||
+        type != D3DPT_TRIANGLESTRIP || primitive_count != 2) {
+        return false;
+    }
+    RECT toolbar_rect{};
+    float texture_width_ratio = 1.0f;
+    if (!GetToolbarBackgroundRenderRect(toolbar_rect,
+                                        texture_width_ratio)) {
         return false;
     }
     IDirect3DVertexBuffer9* buffer = nullptr;
@@ -989,7 +1028,9 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
                                       UINT start_vertex,
                                       UINT primitive_count,
                                       HRESULT& result) {
-    if (g_device_hook.active_target_width != g_device_hook.width ||
+    if ((!g_unified_ui.announcement_active &&
+         !g_unified_ui.photo_album_viewport_active) ||
+        g_device_hook.active_target_width != g_device_hook.width ||
         g_device_hook.active_target_height != g_device_hook.height ||
         type != D3DPT_TRIANGLESTRIP || primitive_count != 2 ||
         !g_device_hook.original_draw_primitive_up ||
@@ -1165,10 +1206,7 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
 
 HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                              UINT start_vertex, UINT primitive_count) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdateScheduleDateHover(device);
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive) {
         if (g_device_hook.gui_runtime_probe &&
             GetTickCount64() - g_attach_tick >= 12000 &&
@@ -1205,9 +1243,6 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
 HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* source,
                                       const RECT* destination, HWND override_window,
                                       const RGNDATA* dirty_region) {
-    RefreshUnifiedUILayout();
-    UpdateScheduleDateHover(device);
-    UpdatePhotoAlbumViewport(device);
     if (device == g_device_hook.device && g_device_hook.original_present) {
         const bool late_title_frame =
             g_unified_ui.title_screen_mode != 0 &&
@@ -1235,9 +1270,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* sour
 HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                                     INT base_vertex, UINT min_vertex, UINT num_vertices,
                                                     UINT start_index, UINT primitive_count) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_indexed_primitive) {
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawIndexedPrimitive", type, primitive_count, nullptr, num_vertices, 0);
@@ -1253,10 +1286,7 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3D
 
 HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                                UINT primitive_count, const void* vertices, UINT stride) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdateScheduleDateHover(device);
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive_up) {
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
@@ -1281,9 +1311,7 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitiveUP(
     IDirect3DDevice9* device, D3DPRIMITIVETYPE type, UINT min_vertex, UINT num_vertices,
     UINT primitive_count, const void* indices, D3DFORMAT index_format,
     const void* vertices, UINT stride) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_indexed_primitive_up) {
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawIndexedPrimitiveUP", type, primitive_count, vertices, num_vertices, stride);
