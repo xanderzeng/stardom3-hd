@@ -1,4 +1,5 @@
 #include "d3d9_proxy_internal.h"
+#include "gui_object.h"
 #include "render_diagnostics.h"
 #include "render_hook_state.h"
 
@@ -72,23 +73,24 @@ void ClearScheduleHighlightCache() {
     g_unified_ui.last_schedule_hover_row = -2;
 }
 
-bool FindScheduleHighlightRows() {
+void* FindScheduleHighlightRows(void* start_page, size_t maximum_pages) {
+    GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(g_unified_ui.primary_root)) {
         ClearScheduleHighlightCache();
-        return false;
+        return nullptr;
     }
 
     auto* primary_bytes =
         static_cast<unsigned char*>(g_unified_ui.primary_root);
-    void* page = *reinterpret_cast<void**>(primary_bytes + 0xF4);
+    void* page = start_page ? start_page :
+        *reinterpret_cast<void**>(primary_bytes + 0xF4);
     size_t page_count = 0;
-    while (CanReadGuiObject(page) && page_count++ < 4096) {
+    while (CanReadGuiObject(page) && page_count++ < maximum_pages) {
         auto* page_bytes = static_cast<unsigned char*>(page);
         const int page_width = *reinterpret_cast<int*>(page_bytes + 0x88);
         const int page_height = *reinterpret_cast<int*>(page_bytes + 0x8C);
-        const bool page_visible = *(page_bytes + 0x99) != 0;
         void* inner = *reinterpret_cast<void**>(page_bytes + 0xF4);
-        if (page_visible && page_width >= 798 && page_width <= 804 &&
+        if (page_width >= 798 && page_width <= 804 &&
             page_height >= 598 && page_height <= 604 &&
             CanReadGuiObject(inner)) {
             auto* inner_bytes = static_cast<unsigned char*>(inner);
@@ -121,15 +123,15 @@ bool FindScheduleHighlightRows() {
                     std::copy(std::begin(rows), std::end(rows),
                               std::begin(g_unified_ui.schedule_highlight_rows));
                     Log("Unified UI schedule hover rows discovered page=%p", page);
-                    return true;
+                    return nullptr;
                 }
             }
         }
         page = *reinterpret_cast<void**>(page_bytes + 0xF8);
     }
 
-    ClearScheduleHighlightCache();
-    return false;
+    return page_count >= maximum_pages && CanReadGuiObject(page) ?
+        page : nullptr;
 }
 
 void UpdateScheduleDateHover(IDirect3DDevice9* device) {
@@ -144,14 +146,55 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
     }
     g_unified_ui.last_schedule_hover_tick = now;
 
-    if (!CanReadGuiObject(g_unified_ui.schedule_root) &&
-        !FindScheduleHighlightRows()) {
-        return;
+    if (!CanReadGuiObject(g_unified_ui.schedule_root)) {
+        // Construction/move activity starts discovery immediately. A bounded
+        // fallback cycle covers visibility-only changes without scanning all
+        // 4096 root children in one frame.
+        const bool layout_activity = g_unified_ui.processed_count !=
+            g_unified_ui.schedule_discovery_processed_count;
+        if (g_unified_ui.schedule_discovery_root !=
+                g_unified_ui.primary_root) {
+            g_unified_ui.schedule_discovery_root =
+                g_unified_ui.primary_root;
+            g_unified_ui.schedule_discovery_cursor = nullptr;
+            g_unified_ui.schedule_discovery_active = false;
+        }
+        constexpr ULONGLONG kScheduleDiscoveryCycleIntervalMs = 500;
+        if (!g_unified_ui.schedule_discovery_active &&
+            (layout_activity ||
+             g_unified_ui.last_schedule_discovery_cycle_tick == 0 ||
+             now - g_unified_ui.last_schedule_discovery_cycle_tick >=
+                 kScheduleDiscoveryCycleIntervalMs)) {
+            g_unified_ui.schedule_discovery_active = true;
+            g_unified_ui.schedule_discovery_cursor = nullptr;
+            g_unified_ui.schedule_discovery_processed_count =
+                g_unified_ui.processed_count;
+        }
+        if (!g_unified_ui.schedule_discovery_active) {
+            return;
+        }
+        constexpr size_t kScheduleDiscoveryPagesPerFrame = 512;
+        g_unified_ui.schedule_discovery_cursor = FindScheduleHighlightRows(
+            g_unified_ui.schedule_discovery_cursor,
+            kScheduleDiscoveryPagesPerFrame);
+        if (CanReadGuiObject(g_unified_ui.schedule_root)) {
+            g_unified_ui.schedule_discovery_active = false;
+        } else if (!g_unified_ui.schedule_discovery_cursor) {
+            g_unified_ui.schedule_discovery_active = false;
+            g_unified_ui.last_schedule_discovery_cycle_tick = now;
+            return;
+        }
+        if (!CanReadGuiObject(g_unified_ui.schedule_root)) {
+            return;
+        }
     }
 
     auto* page_bytes = static_cast<unsigned char*>(g_unified_ui.schedule_root);
     if (*(page_bytes + 0x99) == 0) {
-        ClearScheduleHighlightCache();
+        // Retain the structurally verified hidden page. When the game toggles
+        // visibility directly, hover handling becomes active next frame with
+        // no discovery scan or construction event required.
+        g_unified_ui.last_schedule_hover_row = -2;
         return;
     }
 
@@ -212,15 +255,54 @@ HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
     UpdatePhotoAlbumViewport(device);
     RefreshInGameCGOverlays();
     RefreshUnifiedUILayout();
+    g_device_hook.in_game_cg_visible_this_frame = IsInGameCGVisible();
+    g_device_hook.first_draw_maintenance_done = false;
     if (device == g_device_hook.device &&
         g_device_hook.original_begin_scene) {
         g_device_hook.title_pillarbox_cleared = false;
         g_device_hook.training_pillarbox_cleared = false;
         g_device_hook.loading_background_cleared = false;
+        g_device_hook.loading_page_this_frame = GetLoadingScreenRect(
+            g_device_hook.loading_rect_this_frame);
+        g_device_hook.title_page_this_frame =
+            IsTitleScreenVisible() || IsTitleTutorialVisible();
+        g_device_hook.studio_event_list_this_frame =
+            IsStudioEventListScreenVisible();
+        g_device_hook.airport_selection_this_frame =
+            IsAirportSelectionScreenVisible();
         g_device_hook.title_ready_before_draw = IsTitleScreenVisible();
         return g_device_hook.original_begin_scene(device);
     }
     return D3DERR_INVALIDCALL;
+}
+
+void RunFirstDrawMaintenance() {
+    if (g_device_hook.first_draw_maintenance_done) {
+        return;
+    }
+    g_device_hook.first_draw_maintenance_done = true;
+
+    // Some notification controls finish their font-animation setup after
+    // BeginScene. Discovering and reflowing the whole subtree there overwrites
+    // that one-shot initialization. Advance discovery here instead: controller
+    // updates are complete, while no UI primitive has been submitted yet.
+    if (!g_unified_ui.announcement_active) {
+        constexpr size_t kAnnouncementDiscoveryNodesPerFrame = 512;
+        if (DiscoverAnnouncementScreenIncremental(
+                kAnnouncementDiscoveryNodesPerFrame)) {
+            RefreshUnifiedUILayoutNow();
+            Log("Unified UI announcement activated before first draw");
+        }
+    }
+
+    // Some GUI controllers write their authored coordinates after BeginScene.
+    // Preserve the pre-draw correction, but run it once for the frame rather
+    // than once for every submitted primitive.
+    // The game can rewrite retained overlay positions after BeginScene, so
+    // correct those objects again before the first draw. Surface discovery is
+    // budgeted once per frame in HookBeginScene and must not advance twice.
+    RefreshInGameCGOverlays(false);
+    g_device_hook.in_game_cg_visible_this_frame = IsInGameCGVisible();
 }
 
 HRESULT STDMETHODCALLTYPE HookSetRenderTarget(IDirect3DDevice9* device,
@@ -253,8 +335,6 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
     if (device != g_device_hook.device || !g_device_hook.original_set_viewport || !viewport) {
         return D3DERR_INVALIDCALL;
     }
-
-    RefreshUnifiedUILayout();
 
     // Dynamic map billboards render into off-screen surfaces which can have
     // exactly the same dimensions as the back buffer. Comparing dimensions
@@ -304,17 +384,16 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         return g_device_hook.original_set_viewport(device, viewport);
     }
 
-    // Ordinary maintenance is intentionally low-frequency, but announcement
-    // pages must be identified before their first legacy viewport is applied;
-    // otherwise one native 800x600 frame remains visible for up to a second.
-    // Probe only at this viewport transition and rate-limit failed probes so
-    // ordinary pages never pay for a control-tree scan on every draw call.
+    // Advance at most one bounded discovery chunk at this viewport transition.
+    // Construction activity starts a cycle immediately; visibility-only page
+    // changes use the short fallback cycle without scanning 4096 nodes at once.
     if (!g_unified_ui.announcement_active) {
-        static ULONGLONG last_announcement_probe_tick = 0;
         const ULONGLONG now = GetTickCount64();
-        if (now - last_announcement_probe_tick >= 250) {
-            last_announcement_probe_tick = now;
-            if (IsAnnouncementScreenVisible()) {
+        if (now != g_device_hook.last_announcement_probe_advance_tick) {
+            g_device_hook.last_announcement_probe_advance_tick = now;
+            constexpr size_t kAnnouncementDiscoveryNodesPerStep = 512;
+            if (DiscoverAnnouncementScreenIncremental(
+                    kAnnouncementDiscoveryNodesPerStep)) {
                 RefreshUnifiedUILayoutNow();
                 Log("Unified UI announcement activated before first viewport");
             }
@@ -402,6 +481,223 @@ bool IsPretransformedUI(IDirect3DDevice9* device, DWORD* fvf_out) {
         *fvf_out = fvf;
     }
     return (fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW;
+}
+
+bool IsAirportDateHudVertexRange(IDirect3DDevice9* device,
+                                 const void* vertices,
+                                 UINT vertex_count, UINT stride) {
+    (void)device;
+    if (!g_device_hook.airport_selection_this_frame || !vertices ||
+        vertex_count == 0 || stride < sizeof(float) * 4) {
+        return false;
+    }
+
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    const auto* bytes = static_cast<const unsigned char*>(vertices);
+    for (UINT i = 0; i < vertex_count; ++i) {
+        const auto* position = reinterpret_cast<const float*>(
+            bytes + static_cast<size_t>(i) * stride);
+        if (!std::isfinite(position[0]) || !std::isfinite(position[1])) {
+            return false;
+        }
+        min_x = std::min(min_x, position[0]);
+        min_y = std::min(min_y, position[1]);
+        max_x = std::max(max_x, position[0]);
+        max_y = std::max(max_y, position[1]);
+    }
+
+    constexpr float kDateWidth = 336.0f;
+    constexpr float kDateHeight = 35.0f;
+    constexpr float kTolerance = 1.0f;
+    const float output_width = static_cast<float>(g_device_hook.width);
+    const bool date_hud =
+        min_x >= output_width - kDateWidth - kTolerance &&
+        max_x <= output_width + kTolerance &&
+        min_y >= -kTolerance && max_y <= kDateHeight + kTolerance;
+    return date_hud;
+}
+
+bool IsAirportDateHudPrimitiveFromStream(
+    IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+    UINT start_vertex, UINT primitive_count) {
+    if (!g_device_hook.airport_selection_this_frame) {
+        return false;
+    }
+    const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
+    IDirect3DVertexBuffer9* buffer = nullptr;
+    UINT stream_offset = 0;
+    UINT stride = 0;
+    if (vertex_count == 0 ||
+        FAILED(device->GetStreamSource(
+            0, &buffer, &stream_offset, &stride)) ||
+        !buffer || stride < sizeof(float) * 4) {
+        if (buffer) {
+            buffer->Release();
+        }
+        return false;
+    }
+
+    const size_t byte_offset = static_cast<size_t>(stream_offset) +
+        static_cast<size_t>(start_vertex) * stride;
+    const size_t byte_count = static_cast<size_t>(vertex_count) * stride;
+    D3DVERTEXBUFFER_DESC desc{};
+    void* data = nullptr;
+    if (FAILED(buffer->GetDesc(&desc)) || byte_offset > desc.Size ||
+        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
+        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
+                            static_cast<UINT>(byte_count), &data,
+                            D3DLOCK_READONLY))) {
+        buffer->Release();
+        return false;
+    }
+    const bool date_hud = IsAirportDateHudVertexRange(
+        device, data, vertex_count, stride);
+    buffer->Unlock();
+    buffer->Release();
+    return date_hud;
+}
+
+bool IsAirportDateHudIndexedPrimitiveFromStream(
+    IDirect3DDevice9* device, INT base_vertex,
+    UINT min_vertex, UINT num_vertices) {
+    if (!g_device_hook.airport_selection_this_frame || num_vertices == 0) {
+        return false;
+    }
+    const int64_t first_vertex = static_cast<int64_t>(base_vertex) +
+        static_cast<int64_t>(min_vertex);
+    if (first_vertex < 0) {
+        return false;
+    }
+    IDirect3DVertexBuffer9* buffer = nullptr;
+    UINT stream_offset = 0;
+    UINT stride = 0;
+    if (FAILED(device->GetStreamSource(
+            0, &buffer, &stream_offset, &stride)) ||
+        !buffer || stride < sizeof(float) * 4) {
+        if (buffer) {
+            buffer->Release();
+        }
+        return false;
+    }
+    const size_t byte_offset = static_cast<size_t>(stream_offset) +
+        static_cast<size_t>(first_vertex) * stride;
+    const size_t byte_count = static_cast<size_t>(num_vertices) * stride;
+    D3DVERTEXBUFFER_DESC desc{};
+    void* data = nullptr;
+    if (FAILED(buffer->GetDesc(&desc)) || byte_offset > desc.Size ||
+        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
+        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
+                            static_cast<UINT>(byte_count), &data,
+                            D3DLOCK_READONLY))) {
+        buffer->Release();
+        return false;
+    }
+    const bool date_hud = IsAirportDateHudVertexRange(
+        device, data, num_vertices, stride);
+    buffer->Unlock();
+    buffer->Release();
+    return date_hud;
+}
+
+bool ScaleAirportAirplaneVertices(
+    IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+    UINT primitive_count, const void* vertices, UINT stride,
+    std::vector<unsigned char>& scaled) {
+    if (!g_device_hook.airport_selection_this_frame ||
+        type != D3DPT_TRIANGLESTRIP || primitive_count != 2 || !vertices ||
+        stride < sizeof(float) * 4) {
+        return false;
+    }
+    constexpr UINT kVertexCount = 4;
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    const auto* source = static_cast<const unsigned char*>(vertices);
+    for (UINT i = 0; i < kVertexCount; ++i) {
+        const auto* position = reinterpret_cast<const float*>(
+            source + static_cast<size_t>(i) * stride);
+        min_x = std::min(min_x, position[0]);
+        min_y = std::min(min_y, position[1]);
+        max_x = std::max(max_x, position[0]);
+        max_y = std::max(max_y, position[1]);
+    }
+    if (std::abs((max_x - min_x) - 54.0f) > 1.0f ||
+        std::abs((max_y - min_y) - 58.0f) > 1.0f) {
+        return false;
+    }
+
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    const float center_x = (min_x + max_x) * 0.5f;
+    const float center_y = (min_y + max_y) * 0.5f;
+    scaled.assign(source, source + static_cast<size_t>(kVertexCount) * stride);
+    for (UINT i = 0; i < kVertexCount; ++i) {
+        auto* position = reinterpret_cast<float*>(
+            scaled.data() + static_cast<size_t>(i) * stride);
+        // The controller already submits the airplane on the fitted route.
+        // Preserve that live center and scale only the visual dimensions so
+        // the sprite does not drift down-right along the animation.
+        position[0] = center_x + (position[0] - center_x) *
+            static_cast<float>(viewport_width) / 800.0f;
+        position[1] = center_y + (position[1] - center_y) *
+            static_cast<float>(viewport_height) / 600.0f;
+    }
+    return true;
+}
+
+bool DrawScaledAirportAirplanePrimitive(
+    IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+    UINT start_vertex, UINT primitive_count, HRESULT& result) {
+    if (!g_device_hook.airport_selection_this_frame ||
+        type != D3DPT_TRIANGLESTRIP || primitive_count != 2) {
+        return false;
+    }
+    IDirect3DVertexBuffer9* buffer = nullptr;
+    UINT stream_offset = 0;
+    UINT stride = 0;
+    if (FAILED(device->GetStreamSource(
+            0, &buffer, &stream_offset, &stride)) ||
+        !buffer || stride < sizeof(float) * 4) {
+        if (buffer) {
+            buffer->Release();
+        }
+        return false;
+    }
+    constexpr UINT kVertexCount = 4;
+    const size_t byte_offset = static_cast<size_t>(stream_offset) +
+        static_cast<size_t>(start_vertex) * stride;
+    const size_t byte_count = static_cast<size_t>(kVertexCount) * stride;
+    D3DVERTEXBUFFER_DESC desc{};
+    void* data = nullptr;
+    if (FAILED(buffer->GetDesc(&desc)) || byte_offset > desc.Size ||
+        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
+        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
+                            static_cast<UINT>(byte_count), &data,
+                            D3DLOCK_READONLY))) {
+        buffer->Release();
+        return false;
+    }
+    std::vector<unsigned char> scaled;
+    const bool airplane = ScaleAirportAirplaneVertices(
+        device, type, primitive_count, data, stride, scaled);
+    buffer->Unlock();
+    if (!airplane) {
+        buffer->Release();
+        return false;
+    }
+    result = g_device_hook.original_draw_primitive_up(
+        device, type, primitive_count, scaled.data(), stride);
+    device->SetStreamSource(0, buffer, stream_offset, stride);
+    buffer->Release();
+    return true;
 }
 
 void LogUIDraw(IDirect3DDevice9* device, const char* method, D3DPRIMITIVETYPE type,
@@ -601,15 +897,19 @@ struct TitleScreenClipState {
     RECT previous_rect{};
 };
 
-TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
+TitleScreenClipState BeginTitleScreenClip(
+    IDirect3DDevice9* device, bool preserve_airport_date_hud = false) {
     TitleScreenClipState state;
-    RECT loading_rect{};
-    const bool loading_page = GetLoadingScreenRect(loading_rect);
-    const bool title_page =
-        IsTitleScreenVisible() || IsTitleTutorialVisible();
-    const bool studio_event_list = IsStudioEventListScreenVisible();
+    const bool loading_page = g_device_hook.loading_page_this_frame;
+    const RECT loading_rect = g_device_hook.loading_rect_this_frame;
+    const bool title_page = g_device_hook.title_page_this_frame;
+    const bool studio_event_list =
+        g_device_hook.studio_event_list_this_frame;
+    const bool airport_selection =
+        g_device_hook.airport_selection_this_frame;
     if (!device || !g_device_hook.active_target_is_main ||
-        (!loading_page && !title_page && !studio_event_list)) {
+        (!loading_page && !title_page && !studio_event_list &&
+         !airport_selection)) {
         return state;
     }
 
@@ -645,8 +945,12 @@ TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
         }
         if (viewport_x + viewport_width <
             static_cast<int>(g_device_hook.width)) {
+            // TodayDate is a root-level 336x35 HUD at the output top-right.
+            // Airport rendering may start another scene after drawing it, so
+            // a later pillarbox Clear must never erase its right-hand part.
+            const LONG right_bar_top = airport_selection ? 35 : 0;
             bars[bar_count++] = D3DRECT{
-                viewport_x + viewport_width, 0,
+                viewport_x + viewport_width, right_bar_top,
                 static_cast<LONG>(g_device_hook.width),
                 static_cast<LONG>(g_device_hook.height)};
         }
@@ -683,6 +987,18 @@ TitleScreenClipState BeginTitleScreenClip(IDirect3DDevice9* device) {
             static_cast<LONG>(g_device_hook.height),
         };
     }
+    if (airport_selection && preserve_airport_date_hud &&
+        !loading_page && !title_page && !studio_event_list) {
+        // The game can already have the airport viewport scissor enabled when
+        // the root-level TodayDate HUD is submitted. Merely skipping our own
+        // SetScissorRect leaves that inherited clip active, so explicitly
+        // disable it for this draw and restore it in EndTitleScreenClip.
+        if (FAILED(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE))) {
+            return state;
+        }
+        state.active = true;
+        return state;
+    }
     if (state.previous_enabled) {
         title_rect.left = std::max(title_rect.left, state.previous_rect.left);
         title_rect.top = std::max(title_rect.top, state.previous_rect.top);
@@ -712,7 +1028,8 @@ bool ClearInGameCGPillarboxBeforePrimitive(
     IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     UINT start_vertex, UINT primitive_count) {
     if (!device || !g_device_hook.active_target_is_main ||
-        !IsInGameCGVisible() || type != D3DPT_TRIANGLESTRIP ||
+        !g_device_hook.in_game_cg_visible_this_frame ||
+        type != D3DPT_TRIANGLESTRIP ||
         primitive_count != 2 || !IsPretransformedUI(device, nullptr)) {
         return false;
     }
@@ -821,15 +1138,15 @@ bool CropToolbarBackgroundVertices(IDirect3DDevice9* device,
                                    std::vector<unsigned char>& cropped) {
     if (!device || type != D3DPT_TRIANGLESTRIP || primitive_count != 2 ||
         !vertices || stride < sizeof(float) * 4 ||
-        !g_device_hook.active_target_is_main ||
-        !IsPretransformedUI(device, nullptr)) {
+        !g_device_hook.active_target_is_main) {
         return false;
     }
 
     RECT toolbar_rect{};
     float texture_width_ratio = 1.0f;
     if (!GetToolbarBackgroundRenderRect(toolbar_rect,
-                                        texture_width_ratio)) {
+                                        texture_width_ratio) ||
+        !IsPretransformedUI(device, nullptr)) {
         return false;
     }
 
@@ -903,7 +1220,14 @@ bool DrawCroppedToolbarBackgroundPrimitive(IDirect3DDevice9* device,
                                            UINT start_vertex,
                                            UINT primitive_count,
                                            HRESULT& result) {
-    if (!device || !g_device_hook.original_draw_primitive_up) {
+    if (!device || !g_device_hook.original_draw_primitive_up ||
+        type != D3DPT_TRIANGLESTRIP || primitive_count != 2) {
+        return false;
+    }
+    RECT toolbar_rect{};
+    float texture_width_ratio = 1.0f;
+    if (!GetToolbarBackgroundRenderRect(toolbar_rect,
+                                        texture_width_ratio)) {
         return false;
     }
     IDirect3DVertexBuffer9* buffer = nullptr;
@@ -989,7 +1313,9 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
                                       UINT start_vertex,
                                       UINT primitive_count,
                                       HRESULT& result) {
-    if (g_device_hook.active_target_width != g_device_hook.width ||
+    if ((!g_unified_ui.announcement_active &&
+         !g_unified_ui.photo_album_viewport_active) ||
+        g_device_hook.active_target_width != g_device_hook.width ||
         g_device_hook.active_target_height != g_device_hook.height ||
         type != D3DPT_TRIANGLESTRIP || primitive_count != 2 ||
         !g_device_hook.original_draw_primitive_up ||
@@ -1165,10 +1491,7 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
 
 HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                              UINT start_vertex, UINT primitive_count) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdateScheduleDateHover(device);
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive) {
         if (g_device_hook.gui_runtime_probe &&
             GetTickCount64() - g_attach_tick >= 12000 &&
@@ -1190,10 +1513,18 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
                 shifted_result)) {
             return shifted_result;
         }
+        if (DrawScaledAirportAirplanePrimitive(
+                device, type, start_vertex, primitive_count,
+                shifted_result)) {
+            return shifted_result;
+        }
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDrawFromStream(device, "DrawPrimitive", type, start_vertex, primitive_count);
         }
-        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const bool airport_date_hud = IsAirportDateHudPrimitiveFromStream(
+            device, type, start_vertex, primitive_count);
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(
+            device, airport_date_hud);
         const HRESULT result = g_device_hook.original_draw_primitive(
             device, type, start_vertex, primitive_count);
         EndTitleScreenClip(device, title_clip);
@@ -1205,9 +1536,6 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
 HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* source,
                                       const RECT* destination, HWND override_window,
                                       const RGNDATA* dirty_region) {
-    RefreshUnifiedUILayout();
-    UpdateScheduleDateHover(device);
-    UpdatePhotoAlbumViewport(device);
     if (device == g_device_hook.device && g_device_hook.original_present) {
         const bool late_title_frame =
             g_unified_ui.title_screen_mode != 0 &&
@@ -1235,14 +1563,16 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* sour
 HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                                     INT base_vertex, UINT min_vertex, UINT num_vertices,
                                                     UINT start_index, UINT primitive_count) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_indexed_primitive) {
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawIndexedPrimitive", type, primitive_count, nullptr, num_vertices, 0);
         }
-        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const bool airport_date_hud =
+            IsAirportDateHudIndexedPrimitiveFromStream(
+                device, base_vertex, min_vertex, num_vertices);
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(
+            device, airport_date_hud);
         const HRESULT result = g_device_hook.original_draw_indexed_primitive(
             device, type, base_vertex, min_vertex, num_vertices, start_index, primitive_count);
         EndTitleScreenClip(device, title_clip);
@@ -1253,10 +1583,7 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3D
 
 HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                                UINT primitive_count, const void* vertices, UINT stride) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdateScheduleDateHover(device);
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive_up) {
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
@@ -1268,7 +1595,17 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
                 device, type, primitive_count, vertices, stride, cropped)) {
             draw_vertices = cropped.data();
         }
-        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        std::vector<unsigned char> scaled_airplane;
+        if (ScaleAirportAirplaneVertices(
+                device, type, primitive_count, draw_vertices, stride,
+                scaled_airplane)) {
+            draw_vertices = scaled_airplane.data();
+        }
+        const bool airport_date_hud = IsAirportDateHudVertexRange(
+            device, draw_vertices,
+            PrimitiveVertexCount(type, primitive_count), stride);
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(
+            device, airport_date_hud);
         const HRESULT result = g_device_hook.original_draw_primitive_up(
             device, type, primitive_count, draw_vertices, stride);
         EndTitleScreenClip(device, title_clip);
@@ -1281,14 +1618,15 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitiveUP(
     IDirect3DDevice9* device, D3DPRIMITIVETYPE type, UINT min_vertex, UINT num_vertices,
     UINT primitive_count, const void* indices, D3DFORMAT index_format,
     const void* vertices, UINT stride) {
-    RefreshInGameCGOverlays();
-    RefreshUnifiedUILayout();
-    UpdatePhotoAlbumViewport(device);
+    RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_indexed_primitive_up) {
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawIndexedPrimitiveUP", type, primitive_count, vertices, num_vertices, stride);
         }
-        const TitleScreenClipState title_clip = BeginTitleScreenClip(device);
+        const bool airport_date_hud = IsAirportDateHudVertexRange(
+            device, vertices, num_vertices, stride);
+        const TitleScreenClipState title_clip = BeginTitleScreenClip(
+            device, airport_date_hud);
         const HRESULT result = g_device_hook.original_draw_indexed_primitive_up(
             device, type, min_vertex, num_vertices, primitive_count, indices,
             index_format, vertices, stride);

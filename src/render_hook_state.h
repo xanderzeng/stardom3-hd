@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <d3d9.h>
 
+#include <cstddef>
+
 namespace stardom {
 
 using SetViewportFn = HRESULT (STDMETHODCALLTYPE*)(
@@ -42,7 +44,14 @@ struct DeviceHookState {
     bool loading_background_cleared = false;
     bool loading_background_logged = false;
     bool title_ready_before_draw = false;
+    bool loading_page_this_frame = false;
+    RECT loading_rect_this_frame{};
+    bool title_page_this_frame = false;
+    bool studio_event_list_this_frame = false;
+    bool airport_selection_this_frame = false;
+    bool in_game_cg_visible_this_frame = false;
     bool title_transition_mask_logged = false;
+    ULONGLONG last_announcement_probe_advance_tick = 0;
     UINT active_target_width = 0;
     UINT active_target_height = 0;
     IDirect3DSurface9* main_target_surface = nullptr;
@@ -58,6 +67,7 @@ struct DeviceHookState {
     bool suppress_proxy_containers = false;
     bool gui_runtime_probe = false;
     volatile LONG gui_runtime_probe_done = 0;
+    bool first_draw_maintenance_done = false;
 };
 
 extern DeviceHookState g_device_hook;

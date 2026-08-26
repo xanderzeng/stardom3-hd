@@ -73,8 +73,30 @@ target_compile_definitions(font_replacement_tests PRIVATE WIN32_LEAN_AND_MEAN NO
 target_link_libraries(font_replacement_tests PRIVATE gdi32)
 set_property(TARGET font_replacement_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+add_executable(ui_layout_registry_tests
+    tests/ui_layout_registry_tests.cpp
+    src/ui_layout_registry.cpp
+    src/ui_layout_state.cpp
+)
+target_compile_features(ui_layout_registry_tests PRIVATE cxx_std_17)
+target_include_directories(ui_layout_registry_tests PRIVATE src)
+target_compile_definitions(ui_layout_registry_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET ui_layout_registry_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+add_executable(ui_page_geometry_tests
+    tests/ui_page_geometry_tests.cpp
+    src/ui_page_geometry.cpp
+    src/gui_object.cpp
+)
+target_compile_features(ui_page_geometry_tests PRIVATE cxx_std_17)
+target_include_directories(ui_page_geometry_tests PRIVATE src)
+target_compile_definitions(ui_page_geometry_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET ui_page_geometry_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_test(NAME resolution_geometry COMMAND resolution_geometry_tests)
 add_test(NAME proxy_config COMMAND proxy_config_tests)
+add_test(NAME ui_layout_registry COMMAND ui_layout_registry_tests)
+add_test(NAME ui_page_geometry COMMAND ui_page_geometry_tests)
 add_test(NAME font_replacement_default
     COMMAND font_replacement_tests $<TARGET_FILE:d3d9>
         SimHei 1.00 20)
@@ -86,6 +108,8 @@ add_test(NAME proxy_16_9
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1280 720 1280 720)
 add_test(NAME proxy_4_3
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1024 768 1024 768)
+add_test(NAME proxy_borderless
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080 1)
 add_test(NAME proxy_invalid_resolution
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1366 768 -1 -1)
 add_test(NAME proxy_negative_resolution

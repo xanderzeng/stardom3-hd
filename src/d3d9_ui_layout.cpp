@@ -628,6 +628,48 @@ bool IsArtistSigningPage(void* object, void* parent,
     return visited >= 20 && action_buttons == 2 && portrait;
 }
 
+bool IsAirportSelectionPage(void* object, void* parent,
+                            int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // Airport/Airport.txt is a direct-root 800x600 page. Its distinctive
+    // bottom section consists of a 700x100 flight-information strip and the
+    // two 95x28 go/leave buttons at the far-right edge. The map also owns at
+    // least five 30x30 location buttons directly under the page. Match the
+    // complete group so other centred legacy pages keep their native size.
+    bool flight_information = false;
+    int action_buttons = 0;
+    int location_buttons = 0;
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 64) {
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
+        flight_information |= child_x >= -2 && child_x <= 2 &&
+            child_y >= 498 && child_y <= 502 &&
+            child_width >= 698 && child_width <= 702 &&
+            child_height >= 98 && child_height <= 102;
+        action_buttons += child_x >= 697 && child_x <= 701 &&
+            (child_y >= 514 && child_y <= 518 ||
+             child_y >= 554 && child_y <= 558) &&
+            child_width >= 93 && child_width <= 97 &&
+            child_height >= 26 && child_height <= 30;
+        location_buttons += child_x >= 0 && child_x <= 700 &&
+            child_y >= 150 && child_y <= 320 &&
+            child_width >= 28 && child_width <= 32 &&
+            child_height >= 28 && child_height <= 32 &&
+            CanReadGuiObject(GuiPointer(child, GuiObjectField::first_child));
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return child == nullptr && flight_information && action_buttons == 2 &&
+        location_buttons >= 5;
+}
+
 bool IsStudioEventListPage(void* object, void* parent,
                            int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -1183,9 +1225,9 @@ bool IsInGameCGRoot(void* object, void* parent, int width, int height) {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(object);
-    if (*(bytes + 0x99) == 0) {
-        return false;
-    }
+    // Cache this structurally unique page even while hidden. Visibility is
+    // checked separately every frame, so the first CG can activate without
+    // waiting for another discovery cycle.
     void* first = *reinterpret_cast<void**>(bytes + 0xF4);
     if (!CanReadGuiObject(first)) {
         return false;
@@ -1360,9 +1402,11 @@ RegisterInGameCGNativeOverlay(void* object, int native_x, int native_y,
     return free_slot;
 }
 
-void DiscoverInGameCGSurfaces(void* root) {
+void* DiscoverInGameCGSurfaces(void* root, void* start_child = nullptr,
+                               size_t maximum_nodes = 4096) {
+    GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(root)) {
-        return;
+        return nullptr;
     }
     void* visible_cg = IsInGameCGVisible() ?
         g_unified_ui.in_game_cg_root : nullptr;
@@ -1371,10 +1415,10 @@ void DiscoverInGameCGSurfaces(void* root) {
     int caption_native_y = 342;
     int item_notice_native_x = 0;
     int item_notice_native_y = 316;
-    void* child = *reinterpret_cast<void**>(
+    void* child = start_child ? start_child : *reinterpret_cast<void**>(
         static_cast<unsigned char*>(root) + 0xF4);
     size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 4096) {
+    while (CanReadGuiObject(child) && visited++ < maximum_nodes) {
         auto* bytes = static_cast<unsigned char*>(child);
         const int x = *reinterpret_cast<int*>(bytes + 0x80);
         const int y = *reinterpret_cast<int*>(bytes + 0x84);
@@ -1424,6 +1468,11 @@ void DiscoverInGameCGSurfaces(void* root) {
             g_unified_ui.in_game_cg_item_notice_logged = false;
         }
     }
+    // A non-null result resumes at the next unvisited sibling next frame. At
+    // the end (or after an invalidated list node), restart from the root on the
+    // following frame so visibility-only changes are discovered promptly.
+    return visited >= maximum_nodes && CanReadGuiObject(child) ?
+        child : nullptr;
 }
 
 void LayoutInGameCGRoot(void* object) {
@@ -1741,6 +1790,9 @@ void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
 size_t g_artist_signing_geometry_count = 0;
 void* g_artist_signing_root = nullptr;
+TitleNativeGeometry g_airport_selection_geometry[128]{};
+size_t g_airport_selection_geometry_count = 0;
+void* g_airport_selection_root = nullptr;
 TitleNativeGeometry g_studio_event_list_geometry[1024]{};
 size_t g_studio_event_list_geometry_count = 0;
 void* g_studio_event_list_root = nullptr;
@@ -2041,6 +2093,74 @@ void ScaleArtistSigningSubtree(void* object, int depth = 0) {
         void* next = *reinterpret_cast<void**>(
             static_cast<unsigned char*>(child) + 0xF8);
         ScaleArtistSigningSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetAirportSelectionGeometry(void* root) {
+    if (g_airport_selection_root == root) {
+        return;
+    }
+    g_airport_selection_root = root;
+    g_airport_selection_geometry_count = 0;
+}
+
+bool IsAirportSelectionDescendant(void* object) {
+    return IsDescendantOf(object, g_airport_selection_root, 8);
+}
+
+bool IsAirportAirplaneGeometry(const TitleNativeGeometry* native) {
+    // Airport/Airport.txt: PlaneAirplane is the direct 54x58 visual at
+    // (500,100). Keep its GUI geometry in the controller's native coordinate
+    // system; its final vertices are aspect-fitted by the render hook.
+    return native && native->width == 54 && native->height == 58 &&
+        native->x == 500 && native->y == 100;
+}
+
+void ScaleAirportSelectionSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    int& width = GuiField<int>(object, GuiObjectField::width);
+    int& height = GuiField<int>(object, GuiObjectField::height);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetAirportSelectionGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_airport_selection_geometry,
+            std::size(g_airport_selection_geometry),
+            g_airport_selection_geometry_count, object);
+        if (native) {
+            if (IsAirportAirplaneGeometry(native)) {
+                width = native->width;
+                height = native->height;
+                original(object, native->x, native->y);
+            } else {
+                width = MulDiv(native->width, viewport_width, 800);
+                height = MulDiv(native->height, viewport_height, 600);
+                original(object,
+                    MulDiv(native->x, viewport_width, 800),
+                    MulDiv(native->y, viewport_height, 600));
+            }
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 256) {
+        void* next = GuiPointer(child, GuiObjectField::next_sibling);
+        ScaleAirportSelectionSubtree(child, depth + 1);
         child = next;
     }
 }
@@ -3096,21 +3216,25 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
         auto* child_bytes = static_cast<unsigned char*>(child);
         const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
         const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
-        const bool caption = native_canvas
-            ? child_width >= 140 && child_width <= 150 &&
-                child_height >= 18 && child_height <= 22
-            : std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
-                std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2;
+        // A pooled announcement root can be restored to 800x600 before the
+        // game restores all of its children. Accept either coordinate space
+        // independently so the retained native-geometry cache can repair that
+        // mixed state instead of treating scaled children as new native data.
+        const bool caption =
+            (child_width >= 140 && child_width <= 150 &&
+             child_height >= 18 && child_height <= 22) ||
+            (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2);
         if (caption) {
             ++captions;
         }
         // Result-card positions are recomputed for every artist count. Their
         // authored size is the stable part of the RunSchedule signature.
-        const bool result_card = native_canvas
-            ? child_width >= 95 && child_width <= 105 &&
-                child_height >= 115 && child_height <= 125
-            : std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
-                std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2;
+        const bool result_card =
+            (child_width >= 95 && child_width <= 105 &&
+             child_height >= 115 && child_height <= 125) ||
+            (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2);
         if (result_card) {
             ++result_cards;
         }
@@ -3138,8 +3262,11 @@ bool IsCachedAnnouncementRootValid() {
         viewport_x, viewport_y, viewport_width, viewport_height);
     const int width = *reinterpret_cast<int*>(bytes + 0x88);
     const int height = *reinterpret_cast<int*>(bytes + 0x8C);
-    if (std::abs(width - viewport_width) > 2 ||
-        std::abs(height - viewport_height) > 2) {
+    const bool native_canvas = width >= 790 && width <= 810 &&
+        height >= 590 && height <= 610;
+    const bool scaled_canvas = std::abs(width - viewport_width) <= 2 &&
+        std::abs(height - viewport_height) <= 2;
+    if (!native_canvas && !scaled_canvas) {
         return false;
     }
 
@@ -3151,15 +3278,19 @@ bool IsCachedAnnouncementRootValid() {
         auto* child_bytes = static_cast<unsigned char*>(child);
         const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
         const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
-        if (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
-            std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2) {
+        if ((child_width >= 140 && child_width <= 150 &&
+             child_height >= 18 && child_height <= 22) ||
+            (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2)) {
             ++captions;
         }
         // Do not validate the result-card position here. The game moves all
         // four cards after construction and the coordinates differ between
         // the one-, two-, three-, and four-artist arrangements.
-        if (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
-            std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2) {
+        if ((child_width >= 95 && child_width <= 105 &&
+             child_height >= 115 && child_height <= 125) ||
+            (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
+             std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2)) {
             ++result_cards;
         }
         ++count;
@@ -3168,32 +3299,91 @@ bool IsCachedAnnouncementRootValid() {
     return child == nullptr && captions == 4 && result_cards == 4;
 }
 
-bool IsAnnouncementScreenVisible() {
-    if (IsCachedAnnouncementRootValid()) {
-        return *(static_cast<unsigned char*>(g_announcement_root) +
-            0x99) != 0;
-    }
-    if (g_announcement_root) {
+void* FindAnnouncementRoot(void* start_child, size_t maximum_nodes,
+                           bool& found) {
+    found = false;
+    if (g_announcement_root &&
+        (!CanReadGuiObject(g_announcement_root) ||
+         *reinterpret_cast<void**>(
+             static_cast<unsigned char*>(g_announcement_root) + 0xF0) !=
+             g_unified_ui.primary_root)) {
         g_announcement_root = nullptr;
         g_announcement_geometry_count = 0;
         g_announcement_artist_count = 0;
     }
     if (!CanReadGuiObject(g_unified_ui.primary_root)) {
-        return false;
+        return nullptr;
     }
     auto* root_bytes = static_cast<unsigned char*>(g_unified_ui.primary_root);
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = start_child ? start_child :
+        *reinterpret_cast<void**>(root_bytes + 0xF4);
     size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 4096) {
+    while (CanReadGuiObject(child) && visited++ < maximum_nodes) {
         auto* child_bytes = static_cast<unsigned char*>(child);
         const int width = *reinterpret_cast<int*>(child_bytes + 0x88);
         const int height = *reinterpret_cast<int*>(child_bytes + 0x8C);
         if (IsAnnouncementControlRoot(child, g_unified_ui.primary_root,
                                       width, height)) {
             ResetAnnouncementGeometry(child);
-            return true;
+            found = true;
+            return nullptr;
         }
         child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    }
+    return visited >= maximum_nodes && CanReadGuiObject(child) ?
+        child : nullptr;
+}
+
+bool DiscoverAnnouncementScreenIncremental(size_t maximum_nodes) {
+    if (IsCachedAnnouncementRootValid() &&
+        *(static_cast<unsigned char*>(g_announcement_root) + 0x99) != 0) {
+        return true;
+    }
+    if (!CanReadGuiObject(g_unified_ui.primary_root)) {
+        return false;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.announcement_discovery_processed_count;
+    if (g_unified_ui.announcement_discovery_root !=
+            g_unified_ui.primary_root) {
+        g_unified_ui.announcement_discovery_root =
+            g_unified_ui.primary_root;
+        g_unified_ui.announcement_discovery_cursor = nullptr;
+        g_unified_ui.announcement_discovery_active = false;
+    }
+    constexpr ULONGLONG kAnnouncementDiscoveryCycleIntervalMs = 250;
+    if (!g_unified_ui.announcement_discovery_active &&
+        (layout_activity ||
+         g_unified_ui.last_announcement_discovery_cycle_tick == 0 ||
+         now - g_unified_ui.last_announcement_discovery_cycle_tick >=
+             kAnnouncementDiscoveryCycleIntervalMs)) {
+        g_unified_ui.announcement_discovery_active = true;
+        g_unified_ui.announcement_discovery_cursor = nullptr;
+        g_unified_ui.announcement_discovery_processed_count =
+            g_unified_ui.processed_count;
+    }
+    if (!g_unified_ui.announcement_discovery_active) {
+        return false;
+    }
+
+    bool found = false;
+    g_unified_ui.announcement_discovery_cursor = FindAnnouncementRoot(
+        g_unified_ui.announcement_discovery_cursor, maximum_nodes, found);
+    // FindAnnouncementRoot identifies the page while it still has its native
+    // 800x600 geometry. IsCachedAnnouncementRootValid intentionally expects
+    // the already aspect-fitted geometry, so using it here rejects a genuine
+    // first discovery and leaves the page broken until the rare full-layout
+    // integrity pass. Let the caller perform that initial fit first.
+    if (found) {
+        g_unified_ui.announcement_discovery_active = false;
+        return *(static_cast<unsigned char*>(g_announcement_root) +
+            0x99) != 0;
+    }
+    if (!g_unified_ui.announcement_discovery_cursor) {
+        g_unified_ui.announcement_discovery_active = false;
+        g_unified_ui.last_announcement_discovery_cycle_tick = now;
     }
     return false;
 }
@@ -3214,6 +3404,15 @@ bool IsStudioEventListScreenVisible() {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_studio_event_list_root);
+    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+            g_unified_ui.primary_root && *(bytes + 0x99) != 0;
+}
+
+bool IsAirportSelectionScreenVisible() {
+    if (!CanReadGuiObject(g_airport_selection_root)) {
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(g_airport_selection_root);
     return *reinterpret_cast<void**>(bytes + 0xF0) ==
             g_unified_ui.primary_root && *(bytes + 0x99) != 0;
 }
@@ -3453,8 +3652,8 @@ void ResizeToolbarBackground(void* object, int width, int height) {
 }
 
 void RefreshToolbarSlots(ULONGLONG now) {
-    // RefreshUnifiedUILayout is reached from several draw hooks. Limit this
-    // retained seven-child check to roughly once per rendered frame.
+    // Keep this retained seven-child check rate-limited in case another
+    // immediate layout refresh happens during the same frame.
     constexpr ULONGLONG kToolbarSlotRefreshIntervalMs = 8;
     if (now - g_toolbar_last_slot_refresh_tick <
             kToolbarSlotRefreshIntervalMs ||
@@ -3484,9 +3683,14 @@ void RefreshToolbarSlots(ULONGLONG now) {
 
 bool GetToolbarBackgroundRenderRect(RECT& rect,
                                     float& texture_width_ratio) {
-    if (!CanReadGuiObject(g_toolbar_root) ||
-        g_unified_ui.toolbar_width < 225 ||
+    // Seven-slot mode uses the complete authored background and never needs
+    // UV cropping. Test that retained scalar state before validating the GUI
+    // object because this function is reached from every candidate draw.
+    if (g_unified_ui.toolbar_width < 225 ||
         g_unified_ui.toolbar_width >= 310) {
+        return false;
+    }
+    if (!CanReadGuiObject(g_toolbar_root)) {
         return false;
     }
 
@@ -3630,6 +3834,7 @@ bool TransformToolbarSequenceFrame(void* object, int width, int height,
 }
 
 void ReflowExistingRootChildren(void* root, int depth = 0) {
+    GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(root) || depth > 8 || !g_unified_ui.trampoline) {
         return;
     }
@@ -3831,6 +4036,26 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
                 viewport_x, viewport_y, viewport_width, viewport_height);
             Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (child == g_airport_selection_root) {
+            // The airport controller animates PlaneAirplane along the route.
+            // Initial discovery fits the complete resource tree; replaying
+            // cached child positions during maintenance would snap the plane
+            // back to its authored start. HookGuiMove scales each live frame.
+            RememberProcessedLayoutObject(child);
+        } else if (IsAirportSelectionPage(child, root, width, height)) {
+            ResetAirportSelectionGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleAirportSelectionSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI airport selection aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
         } else if (child == g_studio_event_list_root) {
@@ -4224,25 +4449,48 @@ void RefreshUnifiedUILayout() {
     if (!g_unified_ui.installed || !g_unified_ui.primary_root) {
         return;
     }
+    GuiObjectReadBatch read_batch;
     const ULONGLONG now = GetTickCount64();
     RefreshToolbarSlots(now);
     RefreshPhoneOverlayButton();
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
+    // Closing an already discovered announcement is a direct visibility-byte
+    // change and may not produce GuiMove activity. Retire the active render
+    // path immediately using the retained root instead of waiting for the
+    // rare full-layout integrity pass.
+    if (g_unified_ui.announcement_active &&
+        (!CanReadGuiObject(g_announcement_root) ||
+         *(static_cast<unsigned char*>(g_announcement_root) + 0x99) == 0)) {
+        g_unified_ui.announcement_active = false;
+        Log("Unified UI announcement render layer active=0");
+    }
     // Before the title root is known, scan on the first draw submissions so
     // the page is aspect-fitted before its first visible frame. Once found,
     // return to the low-frequency maintenance pass used by ordinary screens.
     const bool title_discovery_pending =
         g_unified_ui.title_screen_mode != 0 &&
         g_unified_ui.title_screen_root == nullptr;
-    if (!title_discovery_pending &&
-        now - g_unified_ui.last_refresh_tick < 1000) {
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.last_refresh_processed_count;
+    // GuiMove registers new objects as they are constructed, so topology
+    // changes still trigger maintenance on the next frame. Once the layout is
+    // stable, retain only a rare integrity pass. Special controls that can
+    // change visibility without GuiMove use their own incremental discovery
+    // cycles and no longer depend on this full-tree fallback.
+    constexpr ULONGLONG kStableLayoutRefreshIntervalMs = 30000;
+    if (!title_discovery_pending && !layout_activity &&
+        now - g_unified_ui.last_refresh_tick <
+            kStableLayoutRefreshIntervalMs) {
         return;
     }
     g_unified_ui.last_refresh_tick = now;
     ReflowExistingRootChildren(g_unified_ui.primary_root);
+    g_unified_ui.last_refresh_processed_count =
+        g_unified_ui.processed_count;
 
-    const bool announcement_active = IsAnnouncementScreenVisible();
+    const bool announcement_active = IsCachedAnnouncementRootValid() &&
+        *(static_cast<unsigned char*>(g_announcement_root) + 0x99) != 0;
     if (announcement_active != g_unified_ui.announcement_active) {
         g_unified_ui.announcement_active = announcement_active;
         Log("Unified UI announcement render layer active=%d",
@@ -4258,7 +4506,7 @@ void RefreshUnifiedUILayoutNow() {
     RefreshUnifiedUILayout();
 }
 
-void RefreshInGameCGOverlays() {
+void RefreshInGameCGOverlays(bool discover_surfaces) {
     if (!g_unified_ui.installed ||
         !CanReadGuiObject(g_unified_ui.primary_root) ||
         !g_unified_ui.trampoline) {
@@ -4309,17 +4557,51 @@ void RefreshInGameCGOverlays() {
 
     // Once retained, correct the notice immediately at every UI submission.
     // The game writes its authored x=0 directly after BeginScene, bypassing
-    // HookGuiMove. This cheap one-object pass must therefore happen before the
-    // same-millisecond discovery throttle below. The expensive root scan
-    // remains rate-limited.
+    // HookGuiMove. This cheap one-object pass therefore runs both at
+    // BeginScene and before the first draw. Only BeginScene advances the
+    // budgeted discovery cursor below.
     refresh_caption();
     refresh_status_notice();
-    const ULONGLONG now = GetTickCount64();
-    if (now == g_unified_ui.last_in_game_cg_overlay_refresh_tick) {
+    if (!discover_surfaces) {
         return;
     }
-    g_unified_ui.last_in_game_cg_overlay_refresh_tick = now;
-    DiscoverInGameCGSurfaces(g_unified_ui.primary_root);
+    if (g_unified_ui.in_game_cg_discovery_root !=
+            g_unified_ui.primary_root) {
+        g_unified_ui.in_game_cg_discovery_root =
+            g_unified_ui.primary_root;
+        g_unified_ui.in_game_cg_discovery_cursor = nullptr;
+        g_unified_ui.in_game_cg_discovery_active = false;
+    }
+    const ULONGLONG now = GetTickCount64();
+    const bool layout_activity = g_unified_ui.processed_count !=
+        g_unified_ui.in_game_cg_discovery_processed_count;
+    // Visibility can change without a GuiMove callback. Start immediately on
+    // construction activity and otherwise leave a short pause between full
+    // incremental cycles so the fallback remains responsive but bounded.
+    constexpr ULONGLONG kInGameCGDiscoveryCycleIntervalMs = 100;
+    if (!g_unified_ui.in_game_cg_discovery_active &&
+        (layout_activity ||
+         g_unified_ui.last_in_game_cg_discovery_cycle_tick == 0 ||
+         now - g_unified_ui.last_in_game_cg_discovery_cycle_tick >=
+             kInGameCGDiscoveryCycleIntervalMs)) {
+        g_unified_ui.in_game_cg_discovery_active = true;
+        g_unified_ui.in_game_cg_discovery_cursor = nullptr;
+        g_unified_ui.in_game_cg_discovery_processed_count =
+            g_unified_ui.processed_count;
+    }
+    if (g_unified_ui.in_game_cg_discovery_active) {
+        // 512 nodes keeps the worst-case 4096-node root list within eight
+        // frames while spreading the former one-frame spike.
+        constexpr size_t kInGameCGDiscoveryNodesPerFrame = 512;
+        g_unified_ui.in_game_cg_discovery_cursor = DiscoverInGameCGSurfaces(
+            g_unified_ui.primary_root,
+            g_unified_ui.in_game_cg_discovery_cursor,
+            kInGameCGDiscoveryNodesPerFrame);
+        if (!g_unified_ui.in_game_cg_discovery_cursor) {
+            g_unified_ui.in_game_cg_discovery_active = false;
+            g_unified_ui.last_in_game_cg_discovery_cycle_tick = now;
+        }
+    }
     // Discovery may have retained the notice for the first time in this pass.
     refresh_caption();
     refresh_status_notice();
@@ -4362,6 +4644,10 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     if (!original || !self) {
         return;
     }
+    // A single move callback performs many ancestry and signature checks on
+    // the same GUI heap. Share VirtualQuery results only within this callback;
+    // the cache is discarded before returning to the game.
+    GuiObjectReadBatch read_batch;
 
     auto* bytes = static_cast<unsigned char*>(self);
     void* immediate_call = static_cast<unsigned char*>(_ReturnAddress()) - 5;
@@ -4652,6 +4938,53 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self,
                 MulDiv(native->x, viewport_width, 800),
                 MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_airport_selection_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsAirportSelectionDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_airport_selection_geometry,
+            std::size(g_airport_selection_geometry),
+            g_airport_selection_geometry_count, self);
+        if (native) {
+            if (IsAirportAirplaneGeometry(native)) {
+                // The route controller reads this same rectangle back while
+                // interpolating and deciding when the airplane is visible.
+                // Preserve native logical geometry; only rendering is scaled.
+                *reinterpret_cast<int*>(bytes + 0x88) = native->width;
+                *reinterpret_cast<int*>(bytes + 0x8C) = native->height;
+                original(self, x, y);
+            } else {
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width, 800);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native->height, viewport_height, 600);
+                original(self,
+                    MulDiv(native->x, viewport_width, 800),
+                    MulDiv(native->y, viewport_height, 600));
+            }
             return;
         }
     }

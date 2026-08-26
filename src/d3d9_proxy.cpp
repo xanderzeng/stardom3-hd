@@ -72,26 +72,127 @@ bool IsDebugModeEnabled() {
     return g_debug_mode;
 }
 
+constexpr wchar_t kOriginalWindowProcProperty[] =
+    L"Stardom3.Widescreen.OriginalWindowProc";
+
+LRESULT CALLBACK CompatibilityWindowProc(HWND window, UINT message,
+                                         WPARAM wparam, LPARAM lparam) {
+    const auto original = reinterpret_cast<WNDPROC>(
+        GetPropW(window, kOriginalWindowProcProperty));
+
+    // The original fullscreen game does not have a Windows menu interaction.
+    // Once forced into windowed mode, DefWindowProc turns a standalone Alt key
+    // press into SC_KEYMENU and enters a modal menu loop, which stops the game
+    // from updating until another input dismisses it. Suppress only that system
+    // command so Alt combinations and every other window command still work.
+    if (message == WM_SYSCOMMAND &&
+        (wparam & 0xFFF0u) == SC_KEYMENU) {
+        return 0;
+    }
+
+    if (!original) {
+        return DefWindowProcW(window, message, wparam, lparam);
+    }
+
+    const LRESULT result = CallWindowProcW(original, window, message,
+                                           wparam, lparam);
+    if (message == WM_NCDESTROY) {
+        RemovePropW(window, kOriginalWindowProcProperty);
+    }
+    return result;
+}
+
+bool InstallWindowCompatibilityHook(HWND window) {
+    if (!window || !IsWindow(window)) {
+        return false;
+    }
+    if (GetPropW(window, kOriginalWindowProcProperty)) {
+        return true;
+    }
+
+    const auto original = reinterpret_cast<WNDPROC>(
+        GetWindowLongPtrW(window, GWLP_WNDPROC));
+    if (!original ||
+        !SetPropW(window, kOriginalWindowProcProperty,
+                  reinterpret_cast<HANDLE>(original))) {
+        return false;
+    }
+
+    SetLastError(ERROR_SUCCESS);
+    const LONG_PTR previous = SetWindowLongPtrW(
+        window, GWLP_WNDPROC,
+        reinterpret_cast<LONG_PTR>(&CompatibilityWindowProc));
+    if (!previous && GetLastError() != ERROR_SUCCESS) {
+        RemovePropW(window, kOriginalWindowProcProperty);
+        return false;
+    }
+    return true;
+}
+
 
 void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
     if (!window || !IsWindow(window)) {
         return;
     }
 
+    DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+    DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+
+    // The proxy always presents a fixed-size backbuffer, so the OS window has to
+    // stay a fixed size. Windows Aero Snap otherwise maximizes a
+    // resizable/maximizable window when its title bar is dragged to the top
+    // screen edge; that resize desynchronizes the window from the fixed
+    // backbuffer and crashes the game (for example a 1920x1080 window on a
+    // 1920x1080 monitor). Drop the sizing frame and maximize box in every mode,
+    // which also disables the snap-to-top gesture and border-drag resizing.
+    style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+
     if (borderless) {
-        SetWindowLongPtrW(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowLongPtrW(window, GWL_EXSTYLE, WS_EX_APPWINDOW);
-        SetWindowPos(window, nullptr, 0, 0, static_cast<int>(width), static_cast<int>(height),
-                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        return;
+        // Additionally strip the caption/border decorations while keeping every
+        // other style bit the game and D3D9 already rely on (WS_VISIBLE,
+        // WS_CLIPSIBLINGS, WS_CLIPCHILDREN, the game's own flags, ...).
+        // Replacing the whole style with WS_POPUP|WS_VISIBLE discarded those
+        // bits on the live device window and made borderless startup fail.
+        constexpr DWORD kFrameStyle = WS_CAPTION | WS_BORDER | WS_DLGFRAME |
+                                      WS_MINIMIZEBOX | WS_SYSMENU;
+        constexpr DWORD kFrameExStyle = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                                        WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
+        style &= ~kFrameStyle;
+        ex_style &= ~kFrameExStyle;
     }
 
-    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
-    const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+    SetWindowLongPtrW(window, GWL_STYLE, style);
+    SetWindowLongPtrW(window, GWL_EXSTYLE, ex_style);
+
     RECT rect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
     AdjustWindowRectEx(&rect, style, GetMenu(window) != nullptr, ex_style);
-    SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    const int window_width = rect.right - rect.left;
+    const int window_height = rect.bottom - rect.top;
+
+    // Center the resized window inside the monitor's work area and clamp the top
+    // edge so the title bar stays reachable. The old SWP_NOMOVE kept the game's
+    // original small-window origin, which pushed the enlarged window off-screen
+    // and forced the user to drag it toward the top edge (the crash trigger).
+    int x = 0;
+    int y = 0;
+    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info{};
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (monitor && GetMonitorInfoW(monitor, &monitor_info)) {
+        const RECT& work = monitor_info.rcWork;
+        const int work_width = work.right - work.left;
+        const int work_height = work.bottom - work.top;
+        x = work.left + (work_width - window_width) / 2;
+        y = work.top + (work_height - window_height) / 2;
+        if (x < work.left) {
+            x = work.left;
+        }
+        if (y < work.top) {
+            y = work.top;
+        }
+    }
+    SetWindowPos(window, nullptr, x, y, window_width, window_height,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
 bool LoadSystemD3D9() {
@@ -198,6 +299,10 @@ public:
 
         HWND target_window = patched.hDeviceWindow ? patched.hDeviceWindow : focus_window;
         ResizeClientArea(target_window, output_width, output_height, config.borderless);
+        if (!InstallWindowCompatibilityHook(target_window)) {
+            Log("Failed to install window compatibility hook (error=%lu)",
+                GetLastError());
+        }
 
         Log("CreateDevice: requested=%ux%u windowed=%d, patched backbuffer=%ux%u client=%ux%u native=%d borderless=%d debug=%d",
             original_width, original_height, parameters->Windowed,
