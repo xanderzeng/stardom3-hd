@@ -6,9 +6,9 @@
 namespace {
 
 bool HasFontProperties(const char* requested, const wchar_t* expected_face,
-                       LONG expected_height) {
+                       LONG requested_height, LONG expected_height) {
     LOGFONTA request{};
-    request.lfHeight = 20;
+    request.lfHeight = requested_height;
     request.lfCharSet = DEFAULT_CHARSET;
     strcpy_s(request.lfFaceName, requested);
     HFONT font = CreateFontIndirectA(&request);
@@ -55,7 +55,13 @@ int wmain(int argc, wchar_t** argv) {
         !WritePrivateProfileStringW(L"Widescreen", L"FontName", argv[2],
                                     staged_ini) ||
         !WritePrivateProfileStringW(L"Widescreen", L"FontScale", argv[3],
-                                    staged_ini)) {
+                                    staged_ini) ||
+        !WritePrivateProfileStringW(L"Widescreen", L"SmallFontName",
+                                    L"SimSun", staged_ini) ||
+        !WritePrivateProfileStringW(L"Widescreen", L"SmallFontMaxHeight",
+                                    L"16", staged_ini) ||
+        !WritePrivateProfileStringW(L"Widescreen", L"SmallFontScale",
+                                    L"1.00", staged_ini)) {
         return 5;
     }
 
@@ -66,9 +72,11 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     const bool replaced = HasFontProperties(
-        "MingLiU", argv[2], expected_height);
+        "MingLiU", argv[2], 20, expected_height);
+    const bool small_replaced = HasFontProperties(
+        "MingLiU", L"SimSun", 12, 12);
     const bool untouched = HasFontProperties(
-        "Courier New", L"Courier New", 20);
+        "Courier New", L"Courier New", 20, 20);
 
     FreeLibrary(proxy);
     DeleteFileW(staged_ini);
@@ -80,5 +88,8 @@ int wmain(int argc, wchar_t** argv) {
     if (!untouched) {
         std::fwprintf(stderr, L"a non-MingLiU font was unexpectedly changed\n");
     }
-    return replaced && untouched ? 0 : 7;
+    if (!small_replaced) {
+        std::fwprintf(stderr, L"small MingLiU routing mismatch\n");
+    }
+    return replaced && small_replaced && untouched ? 0 : 7;
 }

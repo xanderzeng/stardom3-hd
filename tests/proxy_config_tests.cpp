@@ -57,11 +57,28 @@ int wmain() {
           "FontName must default to SimHei");
     Check(config.font_scale == 1.00,
           "FontScale must default to 1.00");
+    Check(config.small_font_name == L"SimSun",
+          "SmallFontName must default to SimSun");
+    Check(config.small_font_max_height == 16,
+          "SmallFontMaxHeight must default to 16");
+    Check(config.small_font_scale == 1.00,
+          "SmallFontScale must default to 1.00");
 
     WriteOption(path, L"FontName", L"Microsoft JhengHei");
     config = stardom::LoadConfig(path);
     Check(config.font_name == L"Microsoft JhengHei",
           "configured FontName was not loaded");
+
+    WriteOption(path, L"SmallFontName", L"Arial");
+    WriteOption(path, L"SmallFontMaxHeight", L"14");
+    WriteOption(path, L"SmallFontScale", L"1.10");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_name == L"Arial",
+          "configured SmallFontName was not loaded");
+    Check(config.small_font_max_height == 14,
+          "configured SmallFontMaxHeight was not loaded");
+    Check(config.small_font_scale == 1.10,
+          "configured SmallFontScale was not loaded");
 
     WriteOption(path, L"FontScale", L"1.25");
     config = stardom::LoadConfig(path);
@@ -75,6 +92,14 @@ int wmain() {
     config = stardom::LoadConfig(path);
     Check(config.font_scale == 1.00,
           "malformed FontScale did not use the default");
+    WriteOption(path, L"SmallFontMaxHeight", L"200");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_max_height == 128,
+          "SmallFontMaxHeight upper bound was not enforced");
+    WriteOption(path, L"SmallFontScale", L"0.5");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_scale == 0.75,
+          "SmallFontScale lower bound was not enforced");
 
     WriteOption(path, L"DebugMode", L"1");
     config = stardom::LoadConfig(path);
@@ -90,7 +115,13 @@ int wmain() {
                 L"This font face name is longer than LOGFONT permits");
     config = stardom::LoadConfig(path);
     Check(config.font_name == L"SimHei",
-          "overlong FontName did not fall back to SimHei");
+          "overlong FontName did not use its default");
+
+    WriteOption(path, L"SmallFontName",
+                L"This small font face name is longer than LOGFONT permits");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_name == L"SimSun",
+          "overlong SmallFontName did not use its default");
 
     DeleteFileW(path.c_str());
     return failures == 0 ? 0 : 1;

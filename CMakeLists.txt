@@ -98,7 +98,8 @@ add_test(NAME proxy_config COMMAND proxy_config_tests)
 add_test(NAME ui_layout_registry COMMAND ui_layout_registry_tests)
 add_test(NAME ui_page_geometry COMMAND ui_page_geometry_tests)
 add_test(NAME font_replacement_default
-    COMMAND font_replacement_tests $<TARGET_FILE:d3d9> SimHei 1.00 20)
+    COMMAND font_replacement_tests $<TARGET_FILE:d3d9>
+        SimHei 1.00 20)
 add_test(NAME font_replacement_scaled
     COMMAND font_replacement_tests $<TARGET_FILE:d3d9> Arial 1.25 25)
 add_test(NAME proxy_default

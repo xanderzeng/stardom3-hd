@@ -31,23 +31,23 @@ int ReadResolutionValue(const std::wstring& ini_path, const wchar_t* key,
     return valid ? static_cast<int>(parsed) : 0;
 }
 
-std::wstring ReadFontName(const std::wstring& ini_path) {
-    constexpr wchar_t kDefaultFontName[] = L"SimHei";
+std::wstring ReadFontName(const std::wstring& ini_path, const wchar_t* key,
+                          const wchar_t* default_name) {
     wchar_t value[256]{};
     const DWORD length = GetPrivateProfileStringW(
-        L"Widescreen", L"FontName", kDefaultFontName, value,
+        L"Widescreen", key, default_name, value,
         static_cast<DWORD>(std::size(value)), ini_path.c_str());
     if (length == 0 || length >= LF_FACESIZE) {
-        return kDefaultFontName;
+        return default_name;
     }
     return value;
 }
 
-double ReadFontScale(const std::wstring& ini_path) {
+double ReadFontScale(const std::wstring& ini_path, const wchar_t* key) {
     constexpr double kDefaultFontScale = 1.00;
     wchar_t text[64]{};
     const DWORD length = GetPrivateProfileStringW(
-        L"Widescreen", L"FontScale", L"1.00", text,
+        L"Widescreen", key, L"1.00", text,
         static_cast<DWORD>(std::size(text)), ini_path.c_str());
     if (length == 0) {
         return kDefaultFontScale;
@@ -111,8 +111,16 @@ Config LoadConfig(const std::wstring& ini_path) {
     config.title_screen_mode = std::clamp(static_cast<int>(
         GetPrivateProfileIntW(L"Widescreen", L"TitleScreenMode", 1,
                               ini_path.c_str())), 0, 1);
-    config.font_name = ReadFontName(ini_path);
-    config.font_scale = ReadFontScale(ini_path);
+    config.font_name = ReadFontName(
+        ini_path, L"FontName", L"SimHei");
+    config.font_scale = ReadFontScale(ini_path, L"FontScale");
+    config.small_font_name = ReadFontName(
+        ini_path, L"SmallFontName", L"SimSun");
+    config.small_font_max_height = std::clamp(static_cast<int>(
+        GetPrivateProfileIntW(L"Widescreen", L"SmallFontMaxHeight", 16,
+                              ini_path.c_str())), 0, 128);
+    config.small_font_scale = ReadFontScale(
+        ini_path, L"SmallFontScale");
     return config;
 }
 

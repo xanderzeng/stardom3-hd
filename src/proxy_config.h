@@ -25,6 +25,9 @@ struct Config {
     int title_screen_mode = 1;
     std::wstring font_name = L"SimHei";
     double font_scale = 1.00;
+    std::wstring small_font_name = L"SimSun";
+    int small_font_max_height = 16;
+    double small_font_scale = 1.00;
 };
 
 Config LoadConfig(const std::wstring& ini_path);
