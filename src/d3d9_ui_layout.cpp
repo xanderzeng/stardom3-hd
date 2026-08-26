@@ -628,6 +628,48 @@ bool IsArtistSigningPage(void* object, void* parent,
     return visited >= 20 && action_buttons == 2 && portrait;
 }
 
+bool IsAirportSelectionPage(void* object, void* parent,
+                            int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // Airport/Airport.txt is a direct-root 800x600 page. Its distinctive
+    // bottom section consists of a 700x100 flight-information strip and the
+    // two 95x28 go/leave buttons at the far-right edge. The map also owns at
+    // least five 30x30 location buttons directly under the page. Match the
+    // complete group so other centred legacy pages keep their native size.
+    bool flight_information = false;
+    int action_buttons = 0;
+    int location_buttons = 0;
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 64) {
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
+        flight_information |= child_x >= -2 && child_x <= 2 &&
+            child_y >= 498 && child_y <= 502 &&
+            child_width >= 698 && child_width <= 702 &&
+            child_height >= 98 && child_height <= 102;
+        action_buttons += child_x >= 697 && child_x <= 701 &&
+            (child_y >= 514 && child_y <= 518 ||
+             child_y >= 554 && child_y <= 558) &&
+            child_width >= 93 && child_width <= 97 &&
+            child_height >= 26 && child_height <= 30;
+        location_buttons += child_x >= 0 && child_x <= 700 &&
+            child_y >= 150 && child_y <= 320 &&
+            child_width >= 28 && child_width <= 32 &&
+            child_height >= 28 && child_height <= 32 &&
+            CanReadGuiObject(GuiPointer(child, GuiObjectField::first_child));
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return child == nullptr && flight_information && action_buttons == 2 &&
+        location_buttons >= 5;
+}
+
 bool IsStudioEventListPage(void* object, void* parent,
                            int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -1748,6 +1790,9 @@ void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
 size_t g_artist_signing_geometry_count = 0;
 void* g_artist_signing_root = nullptr;
+TitleNativeGeometry g_airport_selection_geometry[128]{};
+size_t g_airport_selection_geometry_count = 0;
+void* g_airport_selection_root = nullptr;
 TitleNativeGeometry g_studio_event_list_geometry[1024]{};
 size_t g_studio_event_list_geometry_count = 0;
 void* g_studio_event_list_root = nullptr;
@@ -2048,6 +2093,74 @@ void ScaleArtistSigningSubtree(void* object, int depth = 0) {
         void* next = *reinterpret_cast<void**>(
             static_cast<unsigned char*>(child) + 0xF8);
         ScaleArtistSigningSubtree(child, depth + 1);
+        child = next;
+    }
+}
+
+void ResetAirportSelectionGeometry(void* root) {
+    if (g_airport_selection_root == root) {
+        return;
+    }
+    g_airport_selection_root = root;
+    g_airport_selection_geometry_count = 0;
+}
+
+bool IsAirportSelectionDescendant(void* object) {
+    return IsDescendantOf(object, g_airport_selection_root, 8);
+}
+
+bool IsAirportAirplaneGeometry(const TitleNativeGeometry* native) {
+    // Airport/Airport.txt: PlaneAirplane is the direct 54x58 visual at
+    // (500,100). Keep its GUI geometry in the controller's native coordinate
+    // system; its final vertices are aspect-fitted by the render hook.
+    return native && native->width == 54 && native->height == 58 &&
+        native->x == 500 && native->y == 100;
+}
+
+void ScaleAirportSelectionSubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    int& width = GuiField<int>(object, GuiObjectField::width);
+    int& height = GuiField<int>(object, GuiObjectField::height);
+    int viewport_x = 0;
+    int viewport_y = 0;
+    int viewport_width = 0;
+    int viewport_height = 0;
+    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+        viewport_x, viewport_y, viewport_width, viewport_height);
+    if (depth == 0) {
+        ResetAirportSelectionGeometry(object);
+        width = viewport_width;
+        height = viewport_height;
+        original(object, viewport_x, viewport_y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_airport_selection_geometry,
+            std::size(g_airport_selection_geometry),
+            g_airport_selection_geometry_count, object);
+        if (native) {
+            if (IsAirportAirplaneGeometry(native)) {
+                width = native->width;
+                height = native->height;
+                original(object, native->x, native->y);
+            } else {
+                width = MulDiv(native->width, viewport_width, 800);
+                height = MulDiv(native->height, viewport_height, 600);
+                original(object,
+                    MulDiv(native->x, viewport_width, 800),
+                    MulDiv(native->y, viewport_height, 600));
+            }
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 256) {
+        void* next = GuiPointer(child, GuiObjectField::next_sibling);
+        ScaleAirportSelectionSubtree(child, depth + 1);
         child = next;
     }
 }
@@ -3295,6 +3408,15 @@ bool IsStudioEventListScreenVisible() {
             g_unified_ui.primary_root && *(bytes + 0x99) != 0;
 }
 
+bool IsAirportSelectionScreenVisible() {
+    if (!CanReadGuiObject(g_airport_selection_root)) {
+        return false;
+    }
+    auto* bytes = static_cast<unsigned char*>(g_airport_selection_root);
+    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+            g_unified_ui.primary_root && *(bytes + 0x99) != 0;
+}
+
 void* g_phone_overlay_root = nullptr;
 void* g_phone_overlay_button = nullptr;
 void* g_toolbar_root = nullptr;
@@ -3914,6 +4036,26 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
                 viewport_x, viewport_y, viewport_width, viewport_height);
             Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (child == g_airport_selection_root) {
+            // The airport controller animates PlaneAirplane along the route.
+            // Initial discovery fits the complete resource tree; replaying
+            // cached child positions during maintenance would snap the plane
+            // back to its authored start. HookGuiMove scales each live frame.
+            RememberProcessedLayoutObject(child);
+        } else if (IsAirportSelectionPage(child, root, width, height)) {
+            ResetAirportSelectionGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleAirportSelectionSubtree(child);
+            RememberProcessedLayoutObject(child);
+            int viewport_x = 0;
+            int viewport_y = 0;
+            int viewport_width = 0;
+            int viewport_height = 0;
+            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+                viewport_x, viewport_y, viewport_width, viewport_height);
+            Log("Unified UI airport selection aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
         } else if (child == g_studio_event_list_root) {
@@ -4796,6 +4938,53 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self,
                 MulDiv(native->x, viewport_width, 800),
                 MulDiv(native->y, viewport_height, 600));
+            return;
+        }
+    }
+    if (self == g_airport_selection_root) {
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsAirportSelectionDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        int viewport_x = 0;
+        int viewport_y = 0;
+        int viewport_width = 0;
+        int viewport_height = 0;
+        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
+            viewport_x, viewport_y, viewport_width, viewport_height);
+        TitleNativeGeometry* native = RememberGeometry(
+            g_airport_selection_geometry,
+            std::size(g_airport_selection_geometry),
+            g_airport_selection_geometry_count, self);
+        if (native) {
+            if (IsAirportAirplaneGeometry(native)) {
+                // The route controller reads this same rectangle back while
+                // interpolating and deciding when the airplane is visible.
+                // Preserve native logical geometry; only rendering is scaled.
+                *reinterpret_cast<int*>(bytes + 0x88) = native->width;
+                *reinterpret_cast<int*>(bytes + 0x8C) = native->height;
+                original(self, x, y);
+            } else {
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width, 800);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native->height, viewport_height, 600);
+                original(self,
+                    MulDiv(native->x, viewport_width, 800),
+                    MulDiv(native->y, viewport_height, 600));
+            }
             return;
         }
     }

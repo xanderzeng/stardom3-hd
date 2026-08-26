@@ -48,6 +48,7 @@ struct DeviceHookState {
     RECT loading_rect_this_frame{};
     bool title_page_this_frame = false;
     bool studio_event_list_this_frame = false;
+    bool airport_selection_this_frame = false;
     bool in_game_cg_visible_this_frame = false;
     bool title_transition_mask_logged = false;
     ULONGLONG last_announcement_probe_advance_tick = 0;

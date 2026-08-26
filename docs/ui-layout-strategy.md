@@ -282,6 +282,26 @@ single 434x410 panel, 100x120 portrait, and paired 98x28 decision buttons. The
 dossier subtree is aspect-fitted with its labels and hit rectangles, while the
 full-height character cut-in remains at its authored size as a separate root.
 
+The airport selector is a direct-root 800x600 page recognized by its 700x100
+flight-information strip, paired 95x28 go/leave buttons, and direct map-location
+controls. The complete page is aspect-fitted so the world map, location markers
+and labels, flight data, action buttons, and hit rectangles retain their native
+relationships. The airplane is controller-animated and its controller reads
+the GUI rectangle back while interpolating and deciding visibility. Its node
+retains native dimensions, while the controller derives each live position
+from the already-fitted route endpoints. The final 54x58 quad is therefore
+scaled around the submitted rectangle's center without transforming the live
+route position again. Maintenance passes do not replay the initial route position.
+While the selector is visible,
+drawing is clipped
+to the fitted viewport and the uncovered output regions are cleared to black
+instead of exposing the underlying airport scene. The native-size `TodayDate`
+HUD remains anchored at the output's top-right. Primitives wholly inside its
+336x35 surface temporarily disable the inherited airport scissor across
+regular, user-memory, and indexed D3D9 draw paths, then restore it immediately.
+The date remains visible over the right bar without revealing the scene around
+it.
+
 The large-studio event manager is a direct-root 800x600 editor page. It is
 identified by its 760x567 ground panel, ten 480x20 event rows, 92x32 exit
 button, and 28x226 scroll track. The complete page hierarchy is fitted as one
