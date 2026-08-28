@@ -76,7 +76,8 @@ HFONT WINAPI HookCreateFontIndirectA(const LOGFONTA* font) {
     replacement.lfWidth = font->lfWidth;
     replacement.lfEscapement = font->lfEscapement;
     replacement.lfOrientation = font->lfOrientation;
-    replacement.lfWeight = font->lfWeight;
+    replacement.lfWeight = use_small_font && config.small_font_weight != 0
+        ? config.small_font_weight : font->lfWeight;
     replacement.lfItalic = font->lfItalic;
     replacement.lfUnderline = font->lfUnderline;
     replacement.lfStrikeOut = font->lfStrikeOut;

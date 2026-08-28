@@ -63,6 +63,8 @@ int wmain() {
           "SmallFontMaxHeight must default to 16");
     Check(config.small_font_scale == 1.00,
           "SmallFontScale must default to 1.00");
+    Check(config.small_font_weight == 0,
+          "SmallFontWeight must default to preserving the original weight");
 
     WriteOption(path, L"FontName", L"Microsoft JhengHei");
     config = stardom::LoadConfig(path);
@@ -72,6 +74,7 @@ int wmain() {
     WriteOption(path, L"SmallFontName", L"Arial");
     WriteOption(path, L"SmallFontMaxHeight", L"14");
     WriteOption(path, L"SmallFontScale", L"1.10");
+    WriteOption(path, L"SmallFontWeight", L"600");
     config = stardom::LoadConfig(path);
     Check(config.small_font_name == L"Arial",
           "configured SmallFontName was not loaded");
@@ -79,6 +82,8 @@ int wmain() {
           "configured SmallFontMaxHeight was not loaded");
     Check(config.small_font_scale == 1.10,
           "configured SmallFontScale was not loaded");
+    Check(config.small_font_weight == 600,
+          "configured SmallFontWeight was not loaded");
 
     WriteOption(path, L"FontScale", L"1.25");
     config = stardom::LoadConfig(path);
@@ -100,6 +105,18 @@ int wmain() {
     config = stardom::LoadConfig(path);
     Check(config.small_font_scale == 0.75,
           "SmallFontScale lower bound was not enforced");
+    WriteOption(path, L"SmallFontWeight", L"1200");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_weight == 900,
+          "SmallFontWeight upper bound was not enforced");
+    WriteOption(path, L"SmallFontWeight", L"50");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_weight == 100,
+          "SmallFontWeight lower bound was not enforced");
+    WriteOption(path, L"SmallFontWeight", L"0");
+    config = stardom::LoadConfig(path);
+    Check(config.small_font_weight == 0,
+          "SmallFontWeight=0 did not preserve the original weight");
 
     WriteOption(path, L"DebugMode", L"1");
     config = stardom::LoadConfig(path);

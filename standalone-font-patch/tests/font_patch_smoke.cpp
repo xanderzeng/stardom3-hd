@@ -9,7 +9,8 @@ namespace {
 using Direct3DCreate9Fn = IDirect3D9* (WINAPI*)(UINT);
 
 bool HasFontProperties(const char* requested, const wchar_t* expected_face,
-                       LONG requested_height, LONG expected_height) {
+                       LONG requested_height, LONG expected_height,
+                       LONG expected_weight = -1) {
     LOGFONTA request{};
     request.lfHeight = requested_height;
     request.lfCharSet = DEFAULT_CHARSET;
@@ -21,7 +22,8 @@ bool HasFontProperties(const char* requested, const wchar_t* expected_face,
     LOGFONTW actual{};
     const bool matches = GetObjectW(font, sizeof(actual), &actual) != 0 &&
         _wcsicmp(actual.lfFaceName, expected_face) == 0 &&
-        actual.lfHeight == expected_height;
+        actual.lfHeight == expected_height &&
+        (expected_weight < 0 || actual.lfWeight == expected_weight);
     DeleteObject(font);
     return matches;
 }
@@ -66,7 +68,9 @@ int wmain(int argc, wchar_t** argv) {
         !WritePrivateProfileStringW(
             L"FontPatch", L"SmallFontMaxHeight", L"16", staged_ini) ||
         !WritePrivateProfileStringW(
-            L"FontPatch", L"SmallFontScale", L"1.00", staged_ini)) {
+            L"FontPatch", L"SmallFontScale", L"1.00", staged_ini) ||
+        !WritePrivateProfileStringW(
+            L"FontPatch", L"SmallFontWeight", L"600", staged_ini)) {
         return 5;
     }
 
@@ -88,7 +92,8 @@ int wmain(int argc, wchar_t** argv) {
         "MingLiU", argv[5], 20, expected_height);
     const bool enabled = std::wcstol(argv[2], nullptr, 10) != 0;
     const bool small_replaced = HasFontProperties(
-        "MingLiU", enabled ? L"SimSun" : L"MingLiU", 12, 12);
+        "MingLiU", enabled ? L"SimSun" : L"MingLiU", 12, 12,
+        enabled ? 600 : -1);
     const bool untouched = HasFontProperties(
         "Courier New", L"Courier New", 20, 20);
 
