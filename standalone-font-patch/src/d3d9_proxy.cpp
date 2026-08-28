@@ -38,11 +38,13 @@ bool LoadSystemD3D9() {
 }  // namespace
 
 extern "C" IDirect3D9* WINAPI Direct3DCreate9(UINT sdk_version) {
+    stardom_font::EnsureInventoryCountHook();
     return LoadSystemD3D9() ? g_create9(sdk_version) : nullptr;
 }
 
 extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version,
                                              IDirect3D9Ex** d3d) {
+    stardom_font::EnsureInventoryCountHook();
     if (!d3d || !LoadSystemD3D9() || !g_create9_ex) {
         return D3DERR_NOTAVAILABLE;
     }
