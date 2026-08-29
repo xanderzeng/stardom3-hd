@@ -41,6 +41,7 @@ bool DiscoverAnnouncementScreenIncremental(size_t maximum_nodes);
 bool IsTrainingScreenPillarboxNeeded();
 bool IsStudioEventListScreenVisible();
 bool IsAirportSelectionScreenVisible();
+bool IsAwardsCeremonyVisible();
 bool GetLoadingScreenRect(RECT& rect);
 bool IsTitleScreenVisible();
 bool IsTitleTutorialVisible();
