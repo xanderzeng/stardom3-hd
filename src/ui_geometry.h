@@ -27,5 +27,9 @@ int TransformAnchoredCoordinate(int position, int extent, int legacy_size,
                                 int output_size);
 PointI TransformWorldCoordinate(int x, int y, int width, int height,
                                 int output_width, int output_height);
+bool ResolveCenteredPageOverlayPosition(const RectI& current,
+                                        const RectI& page_content,
+                                        int output_width, int output_height,
+                                        PointI& resolved);
 
 }  // namespace stardom

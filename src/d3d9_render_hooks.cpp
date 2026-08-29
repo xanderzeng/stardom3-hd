@@ -70,7 +70,9 @@ void ClearScheduleHighlightCache() {
     g_unified_ui.schedule_root = nullptr;
     std::fill(std::begin(g_unified_ui.schedule_highlight_rows),
               std::end(g_unified_ui.schedule_highlight_rows), nullptr);
-    g_unified_ui.last_schedule_hover_row = -2;
+    if (IsDebugModeEnabled()) {
+        g_unified_ui.last_schedule_hover_row = -2;
+    }
 }
 
 void* FindScheduleHighlightRows(void* start_page, size_t maximum_pages) {
@@ -122,7 +124,9 @@ void* FindScheduleHighlightRows(void* start_page, size_t maximum_pages) {
                     g_unified_ui.schedule_root = page;
                     std::copy(std::begin(rows), std::end(rows),
                               std::begin(g_unified_ui.schedule_highlight_rows));
-                    Log("Unified UI schedule hover rows discovered page=%p", page);
+                    if (IsDebugModeEnabled()) {
+                        Log("Unified UI schedule hover rows discovered page=%p", page);
+                    }
                     return nullptr;
                 }
             }
@@ -194,7 +198,9 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
         // Retain the structurally verified hidden page. When the game toggles
         // visibility directly, hover handling becomes active next frame with
         // no discovery scan or construction event required.
-        g_unified_ui.last_schedule_hover_row = -2;
+        if (IsDebugModeEnabled()) {
+            g_unified_ui.last_schedule_hover_row = -2;
+        }
         return;
     }
 
@@ -241,7 +247,8 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
             hovered_row = (row_y - 233) / 40;
         }
     }
-    if (hovered_row != g_unified_ui.last_schedule_hover_row) {
+    if (IsDebugModeEnabled() &&
+        hovered_row != g_unified_ui.last_schedule_hover_row) {
         g_unified_ui.last_schedule_hover_row = hovered_row;
         Log("Unified UI schedule hover row=%d mouse=%ld,%ld page=%d,%d",
             hovered_row, mouse.x, mouse.y, page_x, page_y);

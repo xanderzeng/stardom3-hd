@@ -3092,12 +3092,6 @@ bool IsScheduleTooltipAuthoredX(int x) {
         IsNearAuthoredCoordinate(x, 595);
 }
 
-bool IsSchedulePanelAuthoredX(int x) {
-    return IsNearAuthoredCoordinate(x, 148) ||
-        IsNearAuthoredCoordinate(x, 280) ||
-        IsNearAuthoredCoordinate(x, 430);
-}
-
 bool IsRepeatedObjectPosition(void* object, int x, int y) {
     return IsProcessedLayoutObject(object) && CanReadGuiObject(object) &&
         GuiField<int>(object, GuiObjectField::x) == x &&
@@ -3123,19 +3117,72 @@ void TransformScheduleJobHoverTooltip(void* object, int& x, int& y) {
     y += center_y;
 }
 
-void TransformCenteredScheduleOverlay(void* object, int& x, int& y) {
-    if (IsRepeatedObjectPosition(object, x, y)) {
-        return;
+bool TransformCenteredPageOverlay(void* object, void* parent,
+                                  int width, int height, int& x, int& y) {
+    if (!CanReadGuiObject(object) ||
+        parent != g_unified_ui.primary_root || IsGroupCanvas(object) ||
+        width < 80 || width >= 760 || height < 60 || height >= 560 ||
+        !GuiPointer(object, GuiObjectField::first_child)) {
+        return false;
     }
-    // The picker is horizontally attached to the selected artist column. The
-    // game supplies three authored x positions. Translate only those known
-    // page coordinates and preserve any x already supplied by a secondary
-    // output-space window.
-    const int center_x =
-        (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
-    if (IsSchedulePanelAuthoredX(x)) {
-        x += center_x;
+
+    const RectI current{x, y, width, height};
+    for (size_t i = 0; i < g_unified_ui.group_canvas_count; ++i) {
+        void* page = g_unified_ui.group_canvases[i];
+        if (!CanReadGuiObject(page) ||
+            GuiPointer(page, GuiObjectField::parent) !=
+                g_unified_ui.primary_root ||
+            *(static_cast<unsigned char*>(page) + 0x99) == 0) {
+            continue;
+        }
+
+        void* content = GuiPointer(page, GuiObjectField::first_child);
+        size_t visited = 0;
+        while (CanReadGuiObject(content) && visited++ < 256) {
+            const RectI page_content{
+                GuiField<int>(content, GuiObjectField::x),
+                GuiField<int>(content, GuiObjectField::y),
+                GuiField<int>(content, GuiObjectField::width),
+                GuiField<int>(content, GuiObjectField::height),
+            };
+            // Large, bounded child containers describe a page's actual
+            // content. Some pages expose a smaller inner panel, while others
+            // (including the schedule) expose their populated 800x600 canvas
+            // directly. Candidate overlay dimensions and overlap provide the
+            // decoration/HUD rejection; excluding a full canvas here drops
+            // legitimate detached controls from otherwise identical pages.
+            if (page_content.x >= 0 && page_content.y >= 0 &&
+                page_content.x + page_content.width <= LegacyCanvas::width &&
+                page_content.y + page_content.height <= LegacyCanvas::height &&
+                page_content.width >= 240 &&
+                page_content.height >= 120 &&
+                GuiPointer(content, GuiObjectField::first_child)) {
+                PointI resolved{};
+                if (ResolveCenteredPageOverlayPosition(
+                        current, page_content,
+                        static_cast<int>(g_unified_ui.width),
+                        static_cast<int>(g_unified_ui.height), resolved)) {
+                    x = resolved.x;
+                    y = resolved.y;
+                    return true;
+                }
+            }
+            content = GuiPointer(content, GuiObjectField::next_sibling);
+        }
     }
+    return false;
+}
+
+void TransformCenteredScheduleOverlay(void* object, void* parent,
+                                      int width, int height,
+                                      int& x, int& y) {
+    // Resolve the picker through the same page-ownership rule as every other
+    // detached page popup. This accepts its resource position, settled +18px
+    // frame, mixed native/centered coordinates, and previously misanchored
+    // output position without enumerating any of those coordinates. Always
+    // re-evaluate it: a page can become visible after this object was marked
+    // processed, and the transform is idempotent once ownership is known.
+    TransformCenteredPageOverlay(object, parent, width, height, x, y);
     // Its vertical animation/staging coordinates are not useful after the
     // schedule page is centered; keep the settled legacy baseline instead.
     y = 167 +
@@ -4334,10 +4381,15 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
         } else if (IsScheduleSecondaryPanel(child, root, width, height)) {
             int new_x = x;
             int new_y = y;
-            TransformCenteredScheduleOverlay(child, new_x, new_y);
+            TransformCenteredScheduleOverlay(
+                child, root, width, height, new_x, new_y);
             if (new_x != x || new_y != y) {
                 original(child, new_x, new_y);
             }
+            RememberProcessedLayoutObject(child);
+        } else if (TransformCenteredPageOverlay(
+                       child, root, width, height, x, y)) {
+            original(child, x, y);
             RememberProcessedLayoutObject(child);
         } else if (IsSmallDialoguePortrait(child, root, width, height)) {
             int new_x = x;
@@ -5457,7 +5509,11 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 TransformScheduleJobHoverTooltip(self, x, y);
                 RememberProcessedLayoutObject(self);
             } else if (IsScheduleSecondaryPanel(self, parent, width, height)) {
-                TransformCenteredScheduleOverlay(self, x, y);
+                TransformCenteredScheduleOverlay(
+                    self, parent, width, height, x, y);
+                RememberProcessedLayoutObject(self);
+            } else if (TransformCenteredPageOverlay(
+                           self, parent, width, height, x, y)) {
                 RememberProcessedLayoutObject(self);
             } else if (IsSmallDialoguePortrait(self, parent, width, height)) {
                 PlaceCenteredLegacyOverlay(95, 403, x, y);

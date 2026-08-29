@@ -65,5 +65,57 @@ int main() {
     Check(world.x == 950 && world.y == 530,
           "world-space center transform mismatch");
 
+    const stardom::RectI page_content{260, 70, 530, 378};
+    stardom::PointI overlay{};
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {407, 221, 386, 163}, page_content, 1920, 1080, overlay) &&
+              overlay.x == 967 && overlay.y == 461,
+          "native page overlay was not centered");
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {1527, 461, 386, 163}, page_content, 1920, 1080, overlay) &&
+              overlay.x == 967 && overlay.y == 461,
+          "right-anchored page overlay was not recovered");
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {967, 461, 386, 163}, page_content, 1920, 1080, overlay) &&
+              overlay.x == 967 && overlay.y == 461,
+          "centered page overlay transform was not idempotent");
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {647, 281, 386, 163}, page_content, 1280, 720, overlay) &&
+              overlay.x == 647 && overlay.y == 281,
+          "centered page overlay was not idempotent at 1280x720");
+    Check(!stardom::ResolveCenteredPageOverlayPosition(
+              {1584, 0, 336, 35}, page_content, 1920, 1080, overlay),
+          "top-right HUD was mistaken for a page overlay");
+
+    // The schedule exposes a populated full-canvas child and stages its
+    // detached picker with native X but already-centered Y. Recovering the
+    // authored pair must still produce one complete centered translation.
+    const stardom::RectI full_page_content{0, 0, 800, 600};
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {148, 407, 222, 381}, full_page_content,
+              1920, 1080, overlay) &&
+              overlay.x == 708 && overlay.y == 407,
+          "mixed-space schedule overlay was not centered");
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {708, 407, 222, 381}, full_page_content,
+              1920, 1080, overlay) &&
+              overlay.x == 708 && overlay.y == 407,
+          "centered full-page overlay transform was not idempotent");
+
+    // Compact dropdowns are independent roots too. This producer list was
+    // first edge-anchored to the expanded right side even though its authored
+    // rectangle is fully owned by the active centered page.
+    const stardom::RectI notice_page_content{135, 85, 530, 423};
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {1635, 398, 112, 90}, notice_page_content,
+              1920, 1080, overlay) &&
+              overlay.x == 1075 && overlay.y == 398,
+          "right-anchored producer dropdown was not recovered");
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {1075, 398, 112, 90}, notice_page_content,
+              1920, 1080, overlay) &&
+              overlay.x == 1075 && overlay.y == 398,
+          "centered producer dropdown transform was not idempotent");
+
     return failures == 0 ? 0 : 1;
 }
