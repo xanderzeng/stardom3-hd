@@ -129,12 +129,10 @@ bool IsInventoryCountLabel(void* object) {
     }
     const uintptr_t image_base = reinterpret_cast<uintptr_t>(executable);
     auto* bytes = static_cast<unsigned char*>(object);
-    const int x = *reinterpret_cast<int*>(bytes + 0x80);
-    const int width = *reinterpret_cast<int*>(bytes + 0x88);
     if (*reinterpret_cast<uintptr_t*>(bytes) != image_base + 0x2F0348 ||
-        (x != 322 && x != 330) ||
+        *reinterpret_cast<int*>(bytes + 0x80) != 330 ||
         *reinterpret_cast<int*>(bytes + 0x84) != 5 ||
-        (width != 30 && width != 38) ||
+        *reinterpret_cast<int*>(bytes + 0x88) != 30 ||
         *reinterpret_cast<int*>(bytes + 0x8C) != 20 ||
         *reinterpret_cast<uint32_t*>(bytes + 0x100) != 0xFFE1007C ||
         *reinterpret_cast<int*>(bytes + 0x130) != 16) {
@@ -155,29 +153,17 @@ bool IsInventoryCountLabel(void* object) {
 
 void __fastcall HookLabelSetText(void* self, void*, const char* text) {
     const bool inventory_count_text = IsInventoryCountText(text);
+    g_original_label_set_text(self, text);
     if (!inventory_count_text || !IsInventoryCountLabel(self)) {
-        g_original_label_set_text(self, text);
         return;
     }
 
+    // The game budgets exactly fontSize / 2 pixels for each single-byte
+    // glyph. Bold SimSun can paint through the final cell boundary. Extend
+    // only the inventory count's measured raster; its authored UI rectangle,
+    // font, and all other small labels remain unchanged.
     auto* bytes = static_cast<unsigned char*>(self);
-    const bool three_char_count = text[2] >= '0' && text[2] <= '9';
-    if (!three_char_count) {
-        *reinterpret_cast<int*>(bytes + 0x80) = 330;
-        *reinterpret_cast<int*>(bytes + 0x88) = 30;
-        g_original_label_set_text(self, text);
-        *reinterpret_cast<int*>(bytes + 0x154) += 2;
-        return;
-    }
-
-    // Three-character counts need one extra ASCII cell. Move the wider control
-    // left by the same amount to preserve its authored right edge, then keep a
-    // blank final cell so the last bold SimSun digit is not the clipped glyph.
-    *reinterpret_cast<int*>(bytes + 0x80) = 322;
-    *reinterpret_cast<int*>(bytes + 0x88) = 38;
-    std::string padded_text(text);
-    padded_text.push_back(' ');
-    g_original_label_set_text(self, padded_text.c_str());
+    *reinterpret_cast<int*>(bytes + 0x154) += 2;
 }
 
 bool IsStardom3Executable(HMODULE executable) {
