@@ -121,10 +121,6 @@ Config LoadConfig(const std::wstring& ini_path) {
                               ini_path.c_str())), 0, 128);
     config.small_font_scale = ReadFontScale(
         ini_path, L"SmallFontScale");
-    const int small_font_weight = static_cast<int>(GetPrivateProfileIntW(
-        L"Widescreen", L"SmallFontWeight", 0, ini_path.c_str()));
-    config.small_font_weight = small_font_weight <= 0
-        ? 0 : std::clamp(small_font_weight, 100, 900);
     return config;
 }
 

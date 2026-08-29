@@ -45,8 +45,6 @@ int wmain() {
           "SmallFontMaxHeight must default to 16");
     Check(config.small_font_scale == 1.00,
           "SmallFontScale must default to 1.00");
-    Check(config.small_font_weight == 0,
-          "SmallFontWeight must default to preserving the original weight");
 
     WriteOption(path, L"Enabled", L"0");
     WriteOption(path, L"FontName", L"Arial");
@@ -54,7 +52,6 @@ int wmain() {
     WriteOption(path, L"SmallFontName", L"Tahoma");
     WriteOption(path, L"SmallFontMaxHeight", L"14");
     WriteOption(path, L"SmallFontScale", L"1.10");
-    WriteOption(path, L"SmallFontWeight", L"600");
     config = stardom_font::LoadFontConfig(path);
     Check(!config.enabled, "Enabled=0 was not loaded");
     Check(config.font_name == L"Arial", "custom FontName was not loaded");
@@ -65,8 +62,6 @@ int wmain() {
           "custom SmallFontMaxHeight was not loaded");
     Check(config.small_font_scale == 1.10,
           "custom SmallFontScale was not loaded");
-    Check(config.small_font_weight == 600,
-          "custom SmallFontWeight was not loaded");
 
     WriteOption(path, L"FontScale", L"2.0");
     config = stardom_font::LoadFontConfig(path);
@@ -81,18 +76,6 @@ int wmain() {
           "SmallFontMaxHeight upper bound failed");
     Check(config.small_font_scale == 0.75,
           "SmallFontScale lower bound failed");
-    WriteOption(path, L"SmallFontWeight", L"1200");
-    config = stardom_font::LoadFontConfig(path);
-    Check(config.small_font_weight == 900,
-          "SmallFontWeight upper bound failed");
-    WriteOption(path, L"SmallFontWeight", L"50");
-    config = stardom_font::LoadFontConfig(path);
-    Check(config.small_font_weight == 100,
-          "SmallFontWeight lower bound failed");
-    WriteOption(path, L"SmallFontWeight", L"0");
-    config = stardom_font::LoadFontConfig(path);
-    Check(config.small_font_weight == 0,
-          "SmallFontWeight=0 did not preserve the original weight");
     WriteOption(path, L"FontName",
                 L"This font face name is longer than LOGFONT permits");
     config = stardom_font::LoadFontConfig(path);

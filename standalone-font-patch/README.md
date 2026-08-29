@@ -28,13 +28,11 @@ FontScale=1.00
 SmallFontName=SimSun
 SmallFontMaxHeight=16
 SmallFontScale=1.00
-SmallFontWeight=600
 ```
 
 `FontScale` 与 `SmallFontScale` 的有效范围均为 `0.75`–`1.50`；设置
 `SmallFontMaxHeight=0` 可关闭小字号分流。游戏使用固定字形格，建议缩放保持
-`1.00`，以免裁字或串字。`SmallFontWeight` 接受 `100`–`900` 的 GDI 字重，
-设为 `0` 时保留游戏原始字重；随附配置使用 `600` 对宋体进行轻度加粗。
+`1.00`，以免裁字或串字。
 
 ## 构建
 

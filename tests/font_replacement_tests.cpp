@@ -6,8 +6,7 @@
 namespace {
 
 bool HasFontProperties(const char* requested, const wchar_t* expected_face,
-                       LONG requested_height, LONG expected_height,
-                       LONG expected_weight = -1) {
+                       LONG requested_height, LONG expected_height) {
     LOGFONTA request{};
     request.lfHeight = requested_height;
     request.lfCharSet = DEFAULT_CHARSET;
@@ -19,8 +18,7 @@ bool HasFontProperties(const char* requested, const wchar_t* expected_face,
     LOGFONTW actual{};
     const bool matches = GetObjectW(font, sizeof(actual), &actual) != 0 &&
         _wcsicmp(actual.lfFaceName, expected_face) == 0 &&
-        actual.lfHeight == expected_height &&
-        (expected_weight < 0 || actual.lfWeight == expected_weight);
+        actual.lfHeight == expected_height;
     DeleteObject(font);
     return matches;
 }
@@ -63,9 +61,7 @@ int wmain(int argc, wchar_t** argv) {
         !WritePrivateProfileStringW(L"Widescreen", L"SmallFontMaxHeight",
                                     L"16", staged_ini) ||
         !WritePrivateProfileStringW(L"Widescreen", L"SmallFontScale",
-                                    L"1.00", staged_ini) ||
-        !WritePrivateProfileStringW(L"Widescreen", L"SmallFontWeight",
-                                    L"600", staged_ini)) {
+                                    L"1.00", staged_ini)) {
         return 5;
     }
 
@@ -78,7 +74,7 @@ int wmain(int argc, wchar_t** argv) {
     const bool replaced = HasFontProperties(
         "MingLiU", argv[2], 20, expected_height);
     const bool small_replaced = HasFontProperties(
-        "MingLiU", L"SimSun", 12, 12, 600);
+        "MingLiU", L"SimSun", 12, 12);
     const bool untouched = HasFontProperties(
         "Courier New", L"Courier New", 20, 20);
 
