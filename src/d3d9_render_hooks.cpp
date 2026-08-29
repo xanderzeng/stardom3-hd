@@ -1496,6 +1496,103 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
     return true;
 }
 
+bool NormalizeAwardsScreenVertices(IDirect3DDevice9* device,
+                                    const void* vertices,
+                                    UINT vertex_count, UINT stride,
+                                    std::vector<unsigned char>& normalized) {
+    if (!device || !vertices || vertex_count == 0 ||
+        stride < sizeof(float) * 4 ||
+        g_device_hook.active_target_is_main ||
+        g_device_hook.active_target_width != 400 ||
+        g_device_hook.active_target_height != 300 ||
+        !IsAwardsCeremonyVisible() ||
+        !IsPretransformedUI(device, nullptr)) {
+        return false;
+    }
+
+    const float root_x = static_cast<float>(
+        (static_cast<int>(g_device_hook.width) - 800) / 2);
+    const float root_y = static_cast<float>(
+        (static_cast<int>(g_device_hook.height) - 600) / 2);
+    if (NearlyEqual(root_x, 0.0f) && NearlyEqual(root_y, 0.0f)) {
+        return false;
+    }
+
+    constexpr float kTolerance = 2.0f;
+    const auto* source = static_cast<const unsigned char*>(vertices);
+    for (UINT i = 0; i < vertex_count; ++i) {
+        const auto* position = reinterpret_cast<const float*>(
+            source + static_cast<size_t>(i) * stride);
+        if (position[0] < root_x - kTolerance ||
+            position[0] > root_x + 400.0f + kTolerance ||
+            position[1] < root_y - kTolerance ||
+            position[1] > root_y + 300.0f + kTolerance) {
+            return false;
+        }
+    }
+
+    const size_t byte_count = static_cast<size_t>(vertex_count) * stride;
+    normalized.resize(byte_count);
+    std::memcpy(normalized.data(), vertices, byte_count);
+    for (UINT i = 0; i < vertex_count; ++i) {
+        auto* position = reinterpret_cast<float*>(
+            normalized.data() + static_cast<size_t>(i) * stride);
+        position[0] -= root_x;
+        position[1] -= root_y;
+    }
+    return true;
+}
+
+bool DrawNormalizedAwardsScreenPrimitive(IDirect3DDevice9* device,
+                                          D3DPRIMITIVETYPE type,
+                                          UINT start_vertex,
+                                          UINT primitive_count,
+                                          HRESULT& result) {
+    if (!device || !g_device_hook.original_draw_primitive_up) {
+        return false;
+    }
+
+    IDirect3DVertexBuffer9* buffer = nullptr;
+    UINT stream_offset = 0;
+    UINT stride = 0;
+    if (FAILED(device->GetStreamSource(
+            0, &buffer, &stream_offset, &stride)) || !buffer) {
+        return false;
+    }
+
+    const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
+    const size_t byte_offset = static_cast<size_t>(stream_offset) +
+        static_cast<size_t>(start_vertex) * stride;
+    const size_t byte_count = static_cast<size_t>(vertex_count) * stride;
+    D3DVERTEXBUFFER_DESC desc{};
+    void* data = nullptr;
+    if (vertex_count == 0 || FAILED(buffer->GetDesc(&desc)) ||
+        byte_offset > desc.Size ||
+        byte_count > static_cast<size_t>(desc.Size) - byte_offset ||
+        FAILED(buffer->Lock(static_cast<UINT>(byte_offset),
+                            static_cast<UINT>(byte_count), &data,
+                            D3DLOCK_READONLY))) {
+        buffer->Release();
+        return false;
+    }
+
+    std::vector<unsigned char> normalized;
+    const bool corrected = NormalizeAwardsScreenVertices(
+        device, data, vertex_count, stride, normalized);
+    buffer->Unlock();
+    if (!corrected) {
+        buffer->Release();
+        return false;
+    }
+
+    result = g_device_hook.original_draw_primitive_up(
+        device, type, primitive_count, normalized.data(), stride);
+    device->SetStreamSource(0, buffer, stream_offset, stride);
+    buffer->Release();
+
+    return true;
+}
+
 HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                              UINT start_vertex, UINT primitive_count) {
     RunFirstDrawMaintenance();
@@ -1511,6 +1608,11 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
         ClearInGameCGPillarboxBeforePrimitive(
             device, type, start_vertex, primitive_count);
         HRESULT shifted_result = D3D_OK;
+        if (DrawNormalizedAwardsScreenPrimitive(
+                device, type, start_vertex, primitive_count,
+                shifted_result)) {
+            return shifted_result;
+        }
         if (DrawShiftedAnnouncementPrimitive(device, type, start_vertex,
                                              primitive_count, shifted_result)) {
             return shifted_result;
@@ -1592,6 +1694,13 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
                                                UINT primitive_count, const void* vertices, UINT stride) {
     RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive_up) {
+        std::vector<unsigned char> normalized;
+        const UINT vertex_count = PrimitiveVertexCount(type, primitive_count);
+        if (NormalizeAwardsScreenVertices(
+                device, vertices, vertex_count, stride, normalized)) {
+            return g_device_hook.original_draw_primitive_up(
+                device, type, primitive_count, normalized.data(), stride);
+        }
         if (g_device_hook.ui_draw_diagnostics) {
             LogUIDraw(device, "DrawPrimitiveUP", type, primitive_count, vertices,
                       PrimitiveVertexCount(type, primitive_count), stride);

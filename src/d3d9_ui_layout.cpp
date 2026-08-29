@@ -1029,6 +1029,15 @@ bool IsAwardsCeremonyCurtainLayer(void* object, void* parent) {
     return !first_child && (native_canvas || cover_canvas);
 }
 
+bool IsAwardsCeremonyVisible() {
+    if (!CanReadGuiObject(g_awards_ceremony_root)) {
+        return false;
+    }
+    const auto* bytes = static_cast<const unsigned char*>(
+        g_awards_ceremony_root);
+    return *(bytes + 0x99) != 0;
+}
+
 void LayoutAwardsCeremonyCurtainLayer(void* object) {
     if (!CanReadGuiObject(object) || !g_unified_ui.trampoline) {
         return;
@@ -3121,7 +3130,7 @@ bool TransformCenteredPageOverlay(void* object, void* parent,
                                   int width, int height, int& x, int& y) {
     if (!CanReadGuiObject(object) ||
         parent != g_unified_ui.primary_root || IsGroupCanvas(object) ||
-        width < 80 || width >= 760 || height < 60 || height >= 560 ||
+        width < 80 || width >= 760 || height < 25 || height >= 560 ||
         !GuiPointer(object, GuiObjectField::first_child)) {
         return false;
     }

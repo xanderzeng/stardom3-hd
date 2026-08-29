@@ -86,6 +86,14 @@ int main() {
     Check(!stardom::ResolveCenteredPageOverlayPosition(
               {1584, 0, 336, 35}, page_content, 1920, 1080, overlay),
           "top-right HUD was mistaken for a page overlay");
+    Check(!stardom::ResolveCenteredPageOverlayPosition(
+              {1584, 0, 336, 35}, {0, 0, 800, 600},
+              1920, 1080, overlay),
+          "top-right HUD was mistaken for a full-page overlay");
+    Check(!stardom::ResolveCenteredPageOverlayPosition(
+              {1024, 240, 336, 35}, {0, 0, 800, 600},
+              1920, 1080, overlay),
+          "miscentered top HUD was accepted as a page overlay");
 
     // The schedule exposes a populated full-canvas child and stages its
     // detached picker with native X but already-centered Y. Recovering the
@@ -116,6 +124,20 @@ int main() {
               1920, 1080, overlay) &&
               overlay.x == 1075 && overlay.y == 398,
           "centered producer dropdown transform was not idempotent");
+
+    // Page filter strips are shallow detached roots. They use the same
+    // authored coordinate space as larger popups and must receive the full
+    // centered-page translation even though their height is below 60px.
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {165, 381, 330, 45}, notice_page_content,
+              1920, 1080, overlay) &&
+              overlay.x == 725 && overlay.y == 621,
+          "shallow page filter strip was not centered");
+    Check(stardom::ResolveCenteredPageOverlayPosition(
+              {725, 621, 330, 45}, notice_page_content,
+              1920, 1080, overlay) &&
+              overlay.x == 725 && overlay.y == 621,
+          "centered page filter strip transform was not idempotent");
 
     return failures == 0 ? 0 : 1;
 }

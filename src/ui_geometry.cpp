@@ -138,6 +138,15 @@ bool ResolveCenteredPageOverlayPosition(const RectI& current,
     if (best_overlap * 3 < overlay_area * 2) {
         return false;
     }
+    // Shallow roots recovered to the legacy canvas top edge are global HUD
+    // strips, not page-owned overlays. A full 800x600 page otherwise makes
+    // every top HUD appear fully contained (TodayDate is 336x35), causing the
+    // page translation to move it from the output top-right into the center.
+    // Taller popups and shallow controls located inside page content remain
+    // eligible for the common ownership rule.
+    if (current.height < 60 && best_native.y == 0) {
+        return false;
+    }
     resolved = {best_native.x + center_x, best_native.y + center_y};
     return true;
 }
