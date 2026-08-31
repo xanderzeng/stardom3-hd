@@ -3475,9 +3475,12 @@ bool IsAirportSelectionScreenVisible() {
 
 void* g_phone_overlay_root = nullptr;
 void* g_phone_overlay_button = nullptr;
+ULONGLONG g_phone_overlay_last_discovery_tick = 0;
 void* g_toolbar_root = nullptr;
 ULONGLONG g_toolbar_last_slot_refresh_tick = 0;
 GuiResizeFn g_gui_resize = nullptr;
+
+void ReflowExistingRootChildren(void* root, int depth);
 
 void* FindPhoneOverlayButton(void* object, void* parent,
                              int width, int height) {
@@ -3529,9 +3532,59 @@ void RememberPhoneOverlay(void* root, void* button) {
     g_phone_overlay_button = button;
 }
 
-bool IsPhoneOverlayRinging() {
+bool IsCachedPhoneOverlayValid() {
     if (!CanReadGuiObject(g_phone_overlay_root) ||
         !CanReadGuiObject(g_phone_overlay_button)) {
+        return false;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
+    return *reinterpret_cast<void**>(root_bytes + 0xF0) ==
+            g_unified_ui.primary_root &&
+        *reinterpret_cast<void**>(button_bytes + 0xF0) ==
+            g_phone_overlay_root &&
+        *reinterpret_cast<int*>(button_bytes + 0x88) == 40 &&
+        *reinterpret_cast<int*>(button_bytes + 0x8C) == 40;
+}
+
+void DiscoverPhoneOverlay(ULONGLONG now) {
+    if (IsCachedPhoneOverlayValid() ||
+        !CanReadGuiObject(g_unified_ui.primary_root)) {
+        return;
+    }
+
+    constexpr ULONGLONG kPhoneOverlayDiscoveryIntervalMs = 250;
+    if (g_phone_overlay_last_discovery_tick != 0 &&
+        now - g_phone_overlay_last_discovery_tick <
+            kPhoneOverlayDiscoveryIntervalMs) {
+        return;
+    }
+    g_phone_overlay_last_discovery_tick = now;
+    g_phone_overlay_root = nullptr;
+    g_phone_overlay_button = nullptr;
+
+    auto* primary_bytes =
+        static_cast<unsigned char*>(g_unified_ui.primary_root);
+    void* child = *reinterpret_cast<void**>(primary_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 4096) {
+        auto* child_bytes = static_cast<unsigned char*>(child);
+        void* next = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        const int width = *reinterpret_cast<int*>(child_bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        if (void* phone_button = FindPhoneOverlayButton(
+                child, g_unified_ui.primary_root, width, height)) {
+            RememberPhoneOverlay(child, phone_button);
+            RememberLayoutRoot(child);
+            ReflowExistingRootChildren(child, 1);
+            return;
+        }
+        child = next;
+    }
+}
+
+bool IsPhoneOverlayRinging() {
+    if (!IsCachedPhoneOverlayValid()) {
         return false;
     }
     auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
@@ -3565,37 +3618,262 @@ bool IsPhoneOverlayRinging() {
     return child == nullptr;
 }
 
+bool IsPhoneOverlayButtonVisible() {
+    if (!IsCachedPhoneOverlayValid()) {
+        return false;
+    }
+    return *(static_cast<unsigned char*>(g_phone_overlay_button) + 0x99) != 0;
+}
+
+bool IsPhoneOverlayDialogueVisible() {
+    if (!IsCachedPhoneOverlayValid()) {
+        return false;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    if (*(root_bytes + 0x99) == 0) {
+        return false;
+    }
+    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 6) {
+        auto* child_bytes = static_cast<unsigned char*>(child);
+        if (child != g_phone_overlay_button && *(child_bytes + 0x99) != 0) {
+            return true;
+        }
+        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    }
+    return false;
+}
+
+void LogPhoneOverlayStateIfChanged() {
+    if (!IsDebugModeEnabled()) {
+        return;
+    }
+
+    struct PhoneOverlayDiagnosticState {
+        void* root = nullptr;
+        void* button = nullptr;
+        int x = 0;
+        int y = 0;
+        unsigned char root_visible = 0;
+        unsigned char button_visible = 0;
+        unsigned int sibling_visible_mask = 0;
+        bool announcement_active = false;
+        bool valid = false;
+    };
+    static PhoneOverlayDiagnosticState previous{};
+    static bool initialized = false;
+
+    PhoneOverlayDiagnosticState current{};
+    current.root = g_phone_overlay_root;
+    current.button = g_phone_overlay_button;
+    current.announcement_active = g_unified_ui.announcement_active;
+    current.valid = IsCachedPhoneOverlayValid();
+    if (current.valid) {
+        auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+        auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
+        current.x = *reinterpret_cast<int*>(button_bytes + 0x80);
+        current.y = *reinterpret_cast<int*>(button_bytes + 0x84);
+        current.root_visible = *(root_bytes + 0x99);
+        current.button_visible = *(button_bytes + 0x99);
+        void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+        size_t index = 0;
+        while (CanReadGuiObject(child) && index < 5) {
+            auto* child_bytes = static_cast<unsigned char*>(child);
+            if (child != g_phone_overlay_button &&
+                *(child_bytes + 0x99) != 0) {
+                current.sibling_visible_mask |= 1u << index;
+            }
+            child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+            ++index;
+        }
+    }
+
+    const bool changed = !initialized || current.root != previous.root ||
+        current.button != previous.button || current.x != previous.x ||
+        current.y != previous.y ||
+        current.root_visible != previous.root_visible ||
+        current.button_visible != previous.button_visible ||
+        current.sibling_visible_mask != previous.sibling_visible_mask ||
+        current.announcement_active != previous.announcement_active ||
+        current.valid != previous.valid;
+    if (changed) {
+        Log("Phone overlay state valid=%d root=%p visible=%u button=%p visible=%u "
+            "pos=%d,%d siblings=0x%02X announcement=%d ringing=%d",
+            current.valid ? 1 : 0, current.root,
+            static_cast<unsigned int>(current.root_visible), current.button,
+            static_cast<unsigned int>(current.button_visible),
+            current.x, current.y, current.sibling_visible_mask,
+            current.announcement_active ? 1 : 0,
+            IsPhoneOverlayRinging() ? 1 : 0);
+        if (current.valid &&
+            (!initialized || current.sibling_visible_mask !=
+                previous.sibling_visible_mask)) {
+            auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+            void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+            size_t index = 0;
+            while (CanReadGuiObject(child) && index < 5) {
+                auto* child_bytes = static_cast<unsigned char*>(child);
+                Log("Phone overlay child #%zu self=%p button=%d visible=%u "
+                    "rect=%d,%d %dx%d",
+                    index, child, child == g_phone_overlay_button ? 1 : 0,
+                    static_cast<unsigned int>(*(child_bytes + 0x99)),
+                    *reinterpret_cast<int*>(child_bytes + 0x80),
+                    *reinterpret_cast<int*>(child_bytes + 0x84),
+                    *reinterpret_cast<int*>(child_bytes + 0x88),
+                    *reinterpret_cast<int*>(child_bytes + 0x8C));
+                child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+                ++index;
+            }
+        }
+        previous = current;
+        initialized = true;
+    }
+}
+
 void GetPhoneOverlayButtonPosition(int& x, int& y) {
     x = 3;
     y = 558;
     TransformRootChildPosition(40, 40, x, y);
 }
 
-void RefreshPhoneOverlayButton() {
-    if (!g_unified_ui.trampoline || !IsPhoneOverlayRinging()) {
+bool GetPhoneOverlayDialoguePanelPosition(
+        int width, int height, int& x, int& y) {
+    if (width == 605 && height == 178) {
+        x = 84;
+        y = 390;
+    } else if (width == 40 && height == 40) {
+        x = 590;
+        y = 116;
+    } else if (width == 338 && height == 143) {
+        x = 232;
+        y = 346;
+    } else if (width == 480 && height == 380) {
+        x = 160;
+        y = 110;
+    } else {
+        return false;
+    }
+    TransformRootChildPosition(width, height, x, y);
+    return true;
+}
+
+void RefreshPhoneOverlayDialoguePanels(const char* phase) {
+    if (!g_unified_ui.trampoline || !IsCachedPhoneOverlayValid()) {
+        return;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    if (*(root_bytes + 0x99) == 0) {
+        return;
+    }
+
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 6) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        void* next = *reinterpret_cast<void**>(bytes + 0xF8);
+        if (child != g_phone_overlay_button && *(bytes + 0x99) != 0) {
+            const int width = *reinterpret_cast<int*>(bytes + 0x88);
+            const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+            const int old_x = *reinterpret_cast<int*>(bytes + 0x80);
+            const int old_y = *reinterpret_cast<int*>(bytes + 0x84);
+            const bool parked = old_x + width <= 0 || old_y + height <= 0;
+            int target_x = 0;
+            int target_y = 0;
+            if (parked && GetPhoneOverlayDialoguePanelPosition(
+                    width, height, target_x, target_y)) {
+                original(child, target_x, target_y);
+                const int moved_x = *reinterpret_cast<int*>(bytes + 0x80);
+                const int moved_y = *reinterpret_cast<int*>(bytes + 0x84);
+                const bool rejected = moved_x != target_x || moved_y != target_y;
+                if (rejected) {
+                    *reinterpret_cast<int*>(bytes + 0x80) = target_x;
+                    *reinterpret_cast<int*>(bytes + 0x84) = target_y;
+                }
+                if (IsDebugModeEnabled()) {
+                    Log("Phone overlay dialogue refresh phase=%s self=%p "
+                        "before=%d,%d size=%dx%d target=%d,%d rejected=%d "
+                        "final=%d,%d",
+                        phase, child, old_x, old_y, width, height,
+                        target_x, target_y, rejected ? 1 : 0,
+                        *reinterpret_cast<int*>(bytes + 0x80),
+                        *reinterpret_cast<int*>(bytes + 0x84));
+                }
+                RememberProcessedLayoutObject(child);
+            }
+        }
+        child = next;
+    }
+}
+
+void RefreshPhoneOverlayButton(const char* phase) {
+    const bool debug = IsDebugModeEnabled();
+    const bool valid = IsCachedPhoneOverlayValid();
+    const bool ringing = valid && IsPhoneOverlayRinging();
+    if (!g_unified_ui.trampoline || !ringing) {
+        if (debug && valid && IsPhoneOverlayButtonVisible()) {
+            static bool skip_logged = false;
+            if (!skip_logged) {
+                auto* button_bytes =
+                    static_cast<unsigned char*>(g_phone_overlay_button);
+                Log("Phone overlay refresh phase=%s skipped trampoline=%p "
+                    "ringing=%d pos=%d,%d",
+                    phase, g_unified_ui.trampoline, ringing ? 1 : 0,
+                    *reinterpret_cast<int*>(button_bytes + 0x80),
+                    *reinterpret_cast<int*>(button_bytes + 0x84));
+                skip_logged = true;
+            }
+        }
         return;
     }
 
     auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
-    const int x = *reinterpret_cast<int*>(button_bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(button_bytes + 0x84);
-    const int width = *reinterpret_cast<int*>(button_bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(button_bytes + 0x8C);
-    const bool off_screen = x + width <= 0 || y + height <= 0 ||
-        x >= static_cast<int>(g_unified_ui.width) ||
-        y >= static_cast<int>(g_unified_ui.height);
-    const bool authored_position = x >= 0 && x <= 8 &&
-        y >= 550 && y <= 565;
-    if (!off_screen && !authored_position) {
-        return;
-    }
-
     int target_x = 0;
     int target_y = 0;
     GetPhoneOverlayButtonPosition(target_x, target_y);
+    const int x = *reinterpret_cast<int*>(button_bytes + 0x80);
+    const int y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    if (x == target_x && y == target_y) {
+        return;
+    }
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     original(g_phone_overlay_button, target_x, target_y);
+    int after_x = *reinterpret_cast<int*>(button_bytes + 0x80);
+    int after_y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    const bool move_rejected = after_x != target_x || after_y != target_y;
+    if (move_rejected) {
+        // BtnPhone is retained under BababaCallOut's zero-sized structural
+        // root. The base GuiMove routine returns without updating this child,
+        // even though ordinary root children accept the same output-space
+        // coordinates. Its renderer consumes these canonical position fields,
+        // so preserve the base call and only fall back when it demonstrably
+        // rejected the requested move.
+        *reinterpret_cast<int*>(button_bytes + 0x80) = target_x;
+        *reinterpret_cast<int*>(button_bytes + 0x84) = target_y;
+        after_x = target_x;
+        after_y = target_y;
+    }
+    if (debug) {
+        static unsigned int attempt_count = 0;
+        if (attempt_count < 32) {
+            ++attempt_count;
+            Log("Phone overlay refresh phase=%s attempt=%u before=%d,%d "
+                "target=%d,%d rejected=%d final=%d,%d",
+                phase, attempt_count, x, y, target_x, target_y,
+                move_rejected ? 1 : 0,
+                after_x, after_y);
+        }
+    }
     RememberProcessedLayoutObject(g_phone_overlay_button);
+}
+
+void RefreshPhoneOverlayButtonBeforeDraw() {
+    RefreshPhoneOverlayButton("first-draw");
+    RefreshPhoneOverlayDialoguePanels("first-draw");
+    if (IsDebugModeEnabled()) {
+        LogPhoneOverlayStateIfChanged();
+    }
 }
 
 int CountVisibleToolbarSlots(void* object, void* parent,
@@ -4513,7 +4791,12 @@ void RefreshUnifiedUILayout() {
     GuiObjectReadBatch read_batch;
     const ULONGLONG now = GetTickCount64();
     RefreshToolbarSlots(now);
-    RefreshPhoneOverlayButton();
+    DiscoverPhoneOverlay(now);
+    if (IsDebugModeEnabled()) {
+        LogPhoneOverlayStateIfChanged();
+    }
+    RefreshPhoneOverlayButton("begin-scene");
+    RefreshPhoneOverlayDialoguePanels("begin-scene");
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
     // Closing an already discovered announcement is a direct visibility-byte
@@ -4737,6 +5020,11 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             GetPhoneOverlayButtonPosition(x, y);
         }
         original(self, x, y);
+        if (*reinterpret_cast<int*>(bytes + 0x80) != x ||
+            *reinterpret_cast<int*>(bytes + 0x84) != y) {
+            *reinterpret_cast<int*>(bytes + 0x80) = x;
+            *reinterpret_cast<int*>(bytes + 0x84) = y;
+        }
         return;
     }
     if (self == g_unified_ui.title_screen_root) {

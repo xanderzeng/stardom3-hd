@@ -86,6 +86,27 @@ overwrite it. Once a dialogue,
 confirmation, countdown or question panel is visible, the event controller
 again owns the button position.
 
+`BababaCallOut` can be loaded after the ordinary layout tree has become stable,
+and entering the ringing phase only changes `BtnPhone` visibility without a
+move callback. While the overlay cache is missing or invalid, a lightweight
+250 ms discovery pass therefore checks only the primary root's direct children.
+Once the five-child resource is found, discovery stops and the retained button
+is refreshed every frame without another tree scan.
+
+The retained phone child differs from ordinary root controls: the base
+`GuiMove` routine returns without changing its canonical position fields even
+when it is passed the correct widescreen coordinate. Position maintenance and
+the live move hook preserve the native call, verify the result, and write the
+two canonical fields only when that call demonstrably rejected the move. The
+same verification runs again during first-draw maintenance so controller-side
+parking cannot survive into the rendered frame.
+
+The four post-answer panels under the same zero-sized root have the same move
+restriction. When a panel becomes visible while still parked exactly beyond
+the top-left edge, per-frame maintenance restores the panel position associated
+with its complete resource signature. Hidden panels and visible panels already
+inside the output remain controller-owned.
+
 The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble
 structure as projected NPC dialogue, but its native `(320,60)` coordinate is
 relative to an 800x600 tutorial page rather than the 3D viewport. The tutorial

@@ -10,9 +10,104 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <string>
 #include <vector>
 
 namespace stardom {
+
+bool CapturePhoneOverlayDebugFrame(IDirect3DDevice9* device) {
+    IDirect3DSurface9* back_buffer = nullptr;
+    if (FAILED(device->GetBackBuffer(
+            0, 0, D3DBACKBUFFER_TYPE_MONO, &back_buffer)) || !back_buffer) {
+        Log("Phone overlay capture failed: GetBackBuffer");
+        return false;
+    }
+
+    D3DSURFACE_DESC desc{};
+    HRESULT result = back_buffer->GetDesc(&desc);
+    if (FAILED(result) ||
+        (desc.Format != D3DFMT_X8R8G8B8 && desc.Format != D3DFMT_A8R8G8B8)) {
+        Log("Phone overlay capture failed: unsupported back buffer format=%d result=0x%08X",
+            static_cast<int>(desc.Format), static_cast<unsigned int>(result));
+        back_buffer->Release();
+        return false;
+    }
+
+    IDirect3DSurface9* system_surface = nullptr;
+    result = device->CreateOffscreenPlainSurface(
+        desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
+        &system_surface, nullptr);
+    if (FAILED(result) || !system_surface) {
+        Log("Phone overlay capture failed: CreateOffscreenPlainSurface result=0x%08X",
+            static_cast<unsigned int>(result));
+        back_buffer->Release();
+        return false;
+    }
+    result = device->GetRenderTargetData(back_buffer, system_surface);
+    back_buffer->Release();
+    if (FAILED(result)) {
+        Log("Phone overlay capture failed: GetRenderTargetData result=0x%08X",
+            static_cast<unsigned int>(result));
+        system_surface->Release();
+        return false;
+    }
+
+    D3DLOCKED_RECT locked{};
+    result = system_surface->LockRect(&locked, nullptr, D3DLOCK_READONLY);
+    if (FAILED(result)) {
+        Log("Phone overlay capture failed: LockRect result=0x%08X",
+            static_cast<unsigned int>(result));
+        system_surface->Release();
+        return false;
+    }
+
+    wchar_t executable_path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, executable_path, MAX_PATH);
+    std::wstring capture_path(executable_path);
+    const size_t separator = capture_path.find_last_of(L"\\/");
+    capture_path.resize(separator == std::wstring::npos ? 0 : separator + 1);
+    capture_path += L"Stardom3.PhoneOverlay.Debug.bmp";
+
+    HANDLE file = CreateFileW(capture_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    bool saved = file != INVALID_HANDLE_VALUE;
+    const DWORD row_bytes = desc.Width * 4;
+    const DWORD image_bytes = row_bytes * desc.Height;
+    BITMAPFILEHEADER file_header{};
+    BITMAPINFOHEADER info_header{};
+    file_header.bfType = 0x4D42;
+    file_header.bfOffBits = sizeof(file_header) + sizeof(info_header);
+    file_header.bfSize = file_header.bfOffBits + image_bytes;
+    info_header.biSize = sizeof(info_header);
+    info_header.biWidth = static_cast<LONG>(desc.Width);
+    info_header.biHeight = -static_cast<LONG>(desc.Height);
+    info_header.biPlanes = 1;
+    info_header.biBitCount = 32;
+    info_header.biCompression = BI_RGB;
+    info_header.biSizeImage = image_bytes;
+    DWORD written = 0;
+    if (saved) {
+        saved = WriteFile(file, &file_header, sizeof(file_header), &written, nullptr) &&
+            written == sizeof(file_header) &&
+            WriteFile(file, &info_header, sizeof(info_header), &written, nullptr) &&
+            written == sizeof(info_header);
+    }
+    for (UINT y = 0; saved && y < desc.Height; ++y) {
+        const auto* row = static_cast<const unsigned char*>(locked.pBits) +
+            static_cast<size_t>(y) * locked.Pitch;
+        saved = WriteFile(file, row, row_bytes, &written, nullptr) &&
+            written == row_bytes;
+    }
+    if (file != INVALID_HANDLE_VALUE) {
+        CloseHandle(file);
+    }
+    system_surface->UnlockRect();
+    system_surface->Release();
+    Log("Phone overlay capture %s path=%ls size=%ux%u",
+        saved ? "saved" : "failed", capture_path.c_str(),
+        desc.Width, desc.Height);
+    return saved;
+}
 
 void UpdatePhotoAlbumViewport(IDirect3DDevice9* device) {
     if (!device || device != g_device_hook.device ||
@@ -309,6 +404,11 @@ void RunFirstDrawMaintenance() {
     // correct those objects again before the first draw. Surface discovery is
     // budgeted once per frame in HookBeginScene and must not advance twice.
     RefreshInGameCGOverlays(false);
+    // BababaCallOut writes BtnPhone back to its parked (-40,-40) coordinate
+    // during the controller update after BeginScene. Restore the retained
+    // ringing button here, after controller updates and immediately before
+    // the first UI primitive is submitted.
+    RefreshPhoneOverlayButtonBeforeDraw();
     g_device_hook.in_game_cg_visible_this_frame = IsInGameCGVisible();
 }
 
@@ -463,6 +563,32 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         Log("UI viewport: %u,%u %ux%u -> %u,%u %ux%u (mode=%d)",
             viewport->X, viewport->Y, viewport->Width, viewport->Height,
             scaled.X, scaled.Y, scaled.Width, scaled.Height, g_device_hook.ui_scale_mode);
+    }
+    if (IsDebugModeEnabled()) {
+        static bool phone_viewport_logged = false;
+        static D3DVIEWPORT9 previous_input{};
+        static D3DVIEWPORT9 previous_output{};
+        const bool phone_visible = IsPhoneOverlayButtonVisible();
+        if (!phone_visible) {
+            phone_viewport_logged = false;
+        } else if (!phone_viewport_logged ||
+                   std::memcmp(viewport, &previous_input, sizeof(*viewport)) != 0 ||
+                   std::memcmp(&scaled, &previous_output, sizeof(scaled)) != 0) {
+            DWORD scissor_enabled = FALSE;
+            RECT scissor{};
+            device->GetRenderState(D3DRS_SCISSORTESTENABLE, &scissor_enabled);
+            device->GetScissorRect(&scissor);
+            Log("Phone overlay viewport in=%u,%u %ux%u out=%u,%u %ux%u "
+                "scissor=%lu rect=%ld,%ld..%ld,%ld announcement=%d",
+                viewport->X, viewport->Y, viewport->Width, viewport->Height,
+                scaled.X, scaled.Y, scaled.Width, scaled.Height,
+                static_cast<unsigned long>(scissor_enabled),
+                scissor.left, scissor.top, scissor.right, scissor.bottom,
+                g_unified_ui.announcement_active ? 1 : 0);
+            previous_input = *viewport;
+            previous_output = scaled;
+            phone_viewport_logged = true;
+        }
     }
     return g_device_hook.original_set_viewport(device, &scaled);
 }
@@ -1646,6 +1772,17 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* sour
                                       const RECT* destination, HWND override_window,
                                       const RGNDATA* dirty_region) {
     if (device == g_device_hook.device && g_device_hook.original_present) {
+        if (IsDebugModeEnabled()) {
+            static bool phone_dialogue_capture_attempted = false;
+            const bool phone_dialogue_visible =
+                IsPhoneOverlayDialogueVisible();
+            if (!phone_dialogue_visible) {
+                phone_dialogue_capture_attempted = false;
+            } else if (!phone_dialogue_capture_attempted) {
+                phone_dialogue_capture_attempted = true;
+                CapturePhoneOverlayDebugFrame(device);
+            }
+        }
         const bool late_title_frame =
             g_unified_ui.title_screen_mode != 0 &&
             !g_device_hook.title_ready_before_draw &&
