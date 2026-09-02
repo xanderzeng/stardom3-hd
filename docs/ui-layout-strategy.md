@@ -144,6 +144,32 @@ approximately 802x602, and has no descendants. This leaf surface is resized to
 the complete output resolution. Legacy pages with child controls keep their
 native 800x600 size and centered placement.
 
+The end-game summary is the exception for the completion sequence. Its exact
+four-child `Main/EndGame.txt` signature (history memo, two overlapping credit
+planes, and character photo) opts the complete 800x600 subtree into the same
+4:3 aspect-fit transform as the title screen. Positions and dimensions are
+scaled together, so the character image and animated credits grow uniformly
+with the page instead of remaining at native size in the centre of a wide
+output. Later controller moves inside the credit sequence are transformed at
+the GUI move boundary without replaying the cached initial scroll position.
+The controller advances each credit plane by subtracting a small increment
+from the plane's current y coordinate. Because that current coordinate is
+already scaled, treating the submitted value as another native absolute
+position causes exponential acceleration and collapses the two planes. As
+with the title silhouette strips, each plane therefore retains an independent
+native animation coordinate. Small deltas relative to the displayed position
+advance that native state, while explicit keyframes such as the initial
+`y=600` and `y=1200` replace it; only the resulting native positions are
+aspect-fitted, preserving the authored 600-pixel separation.
+The controller also reads the live plane y coordinate and hides or refills a
+plane once it reaches a compiled `-600` cutoff. That comparison immediate is
+patched to the fitted viewport height (`-1080` at 1920x1080), keeping the
+controller and rendered plane in one coordinate space even if multiple update
+ticks occur between presentations. This prevents both premature disappearance
+and the transient centred position caused by swapping the live rectangle
+between native and scaled coordinates. First-draw maintenance still reapplies
+the fitted rectangles while an artist-summary change pauses movement.
+
 The map and save-load progress page is a different 800x600 control tree. Its
 top status badge, central artwork and bottom progress strip identify it without
 matching ordinary legacy pages. While that page is visible, rendering outside

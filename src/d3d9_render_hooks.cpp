@@ -404,6 +404,11 @@ void RunFirstDrawMaintenance() {
     // correct those objects again before the first draw. Surface discovery is
     // budgeted once per frame in HookBeginScene and must not advance twice.
     RefreshInGameCGOverlays(false);
+    // Credit scrolling pauses briefly while EndGame changes the artist
+    // summary. No GuiMove is emitted during that pause, so explicitly restore
+    // the fitted render coordinates after the controller update rather than
+    // exposing the native coordinates retained for its -600 cutoff.
+    RefreshEndGameCreditsBeforeDraw();
     // BababaCallOut writes BtnPhone back to its parked (-40,-40) coordinate
     // during the controller update after BeginScene. Restore the retained
     // ringing button here, after controller updates and immediately before

@@ -63,6 +63,22 @@ PointI TransformWorldCoordinate(int x, int y, int width, int height,
     };
 }
 
+int ResolveNativeAnimationCoordinate(int submitted_position,
+                                     int current_scaled_position,
+                                     int native_position,
+                                     int maximum_increment) {
+    const std::int64_t increment =
+        static_cast<std::int64_t>(submitted_position) -
+        current_scaled_position;
+    if (maximum_increment >= 0 &&
+        increment >= -maximum_increment &&
+        increment <= maximum_increment) {
+        return static_cast<int>(static_cast<std::int64_t>(native_position) +
+            increment);
+    }
+    return submitted_position;
+}
+
 bool ResolveCenteredPageOverlayPosition(const RectI& current,
                                         const RectI& page_content,
                                         int output_width, int output_height,

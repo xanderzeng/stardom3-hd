@@ -27,6 +27,10 @@ int TransformAnchoredCoordinate(int position, int extent, int legacy_size,
                                 int output_size);
 PointI TransformWorldCoordinate(int x, int y, int width, int height,
                                 int output_width, int output_height);
+int ResolveNativeAnimationCoordinate(int submitted_position,
+                                     int current_scaled_position,
+                                     int native_position,
+                                     int maximum_increment = 16);
 bool ResolveCenteredPageOverlayPosition(const RectI& current,
                                         const RectI& page_content,
                                         int output_width, int output_height,

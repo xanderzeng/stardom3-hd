@@ -65,6 +65,25 @@ int main() {
     Check(world.x == 950 && world.y == 530,
           "world-space center transform mismatch");
 
+    Check(stardom::ResolveNativeAnimationCoordinate(
+              600, 0, 0) == 600,
+          "absolute native animation position was not retained");
+    Check(stardom::ResolveNativeAnimationCoordinate(
+              1079, 1080, 600) == 599,
+          "scaled animation feedback was not reduced to a native increment");
+    Check(stardom::ResolveNativeAnimationCoordinate(
+              1070, 1080, 600) == 590,
+          "fast scaled animation feedback was not reduced to a native increment");
+    Check(stardom::ResolveNativeAnimationCoordinate(
+              599, 1080, 600) == 599,
+          "native animation keyframe was mistaken for scaled feedback");
+    const int first_credit_y = stardom::ResolveNativeAnimationCoordinate(
+        1079, 1080, 600);
+    const int second_credit_y = stardom::ResolveNativeAnimationCoordinate(
+        2159, 2160, 1200);
+    Check(second_credit_y - first_credit_y == 600,
+          "paired animation layers lost their native separation");
+
     const stardom::RectI page_content{260, 70, 530, 378};
     stardom::PointI overlay{};
     Check(stardom::ResolveCenteredPageOverlayPosition(

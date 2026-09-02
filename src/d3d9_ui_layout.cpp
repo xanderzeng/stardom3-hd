@@ -924,6 +924,47 @@ bool IsLoadingPageRoot(void* object, void* parent, int width, int height) {
         signature.bottom_progress;
 }
 
+bool IsEndGameSummaryPage(void* object, void* parent,
+                          int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // Main/EndGame.txt is a direct-root 800x600 page with exactly four
+    // children: the history memo, two overlapping 300x600 scrolling-credit
+    // planes, and the 240x180 character photo. Match the complete resource
+    // signature so other legacy pages retain their ordinary native-size
+    // centered layout.
+    int history_memos = 0;
+    int credit_planes = 0;
+    int character_photos = 0;
+    size_t child_count = 0;
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    while (CanReadGuiObject(child) && child_count < 8) {
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
+        history_memos += child_x >= 68 && child_x <= 72 &&
+            child_y >= 354 && child_y <= 358 &&
+            child_width >= 399 && child_width <= 403 &&
+            child_height >= 209 && child_height <= 213;
+        credit_planes += child_x >= 498 && child_x <= 502 &&
+            child_y >= -2 && child_y <= 2 &&
+            child_width >= 298 && child_width <= 302 &&
+            child_height >= 598 && child_height <= 602;
+        character_photos += child_x >= 78 && child_x <= 82 &&
+            child_y >= 118 && child_y <= 122 &&
+            child_width >= 238 && child_width <= 242 &&
+            child_height >= 178 && child_height <= 182;
+        ++child_count;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return child == nullptr && child_count == 4 && history_memos == 1 &&
+        credit_planes == 2 && character_photos == 1;
+}
+
 bool IsScheduleSecondaryPanel(void* object, void* parent,
                               int width, int height) {
     // The schedule detail picker is a unique 222x381 direct-root panel. The
@@ -1826,6 +1867,19 @@ TitleNativeGeometry g_training_activity_geometry[1024]{};
 size_t g_training_activity_geometry_count = 0;
 void* g_training_activity_roots[16]{};
 size_t g_training_activity_root_count = 0;
+TitleNativeGeometry g_end_game_summary_geometry[16]{};
+size_t g_end_game_summary_geometry_count = 0;
+void* g_end_game_summary_root = nullptr;
+
+struct EndGameCreditMotionState {
+    void* object = nullptr;
+    int native_x = 500;
+    int native_y = 0;
+    int native_width = 300;
+    int native_height = 600;
+};
+
+EndGameCreditMotionState g_end_game_credit_motion[2]{};
 
 struct ArtistRadarVertexCache {
     float x[7][4]{};
@@ -1836,6 +1890,119 @@ struct ArtistRadarVertexCache {
 ArtistRadarVertexCache g_artist_radar_vertices;
 
 bool IsCachedAnnouncementRootValid();
+
+void ResetEndGameSummaryGeometry(void* root) {
+    if (g_end_game_summary_root == root) {
+        return;
+    }
+    g_end_game_summary_root = root;
+    g_end_game_summary_geometry_count = 0;
+    for (auto& motion : g_end_game_credit_motion) {
+        motion = {};
+    }
+}
+
+bool IsEndGameSummaryDescendant(void* object) {
+    return IsDescendantOf(object, g_end_game_summary_root);
+}
+
+bool IsEndGameCreditGeometry(const TitleNativeGeometry* native) {
+    return native && native->x >= 498 && native->x <= 502 &&
+        native->y >= -2 && native->y <= 2 &&
+        native->width >= 298 && native->width <= 302 &&
+        native->height >= 598 && native->height <= 602;
+}
+
+EndGameCreditMotionState* RememberEndGameCreditMotion(
+        void* object, const TitleNativeGeometry* native) {
+    if (!object || !IsEndGameCreditGeometry(native)) {
+        return nullptr;
+    }
+    for (auto& motion : g_end_game_credit_motion) {
+        if (motion.object == object) {
+            return &motion;
+        }
+    }
+    for (auto& motion : g_end_game_credit_motion) {
+        if (!motion.object) {
+            motion.object = object;
+            motion.native_x = native->x;
+            motion.native_y = native->y;
+            motion.native_width = native->width;
+            motion.native_height = native->height;
+            return &motion;
+        }
+    }
+    return nullptr;
+}
+
+void RefreshEndGameCreditsBeforeDraw() {
+    if (!CanReadGuiObject(g_end_game_summary_root) ||
+        GuiField<unsigned char>(g_end_game_summary_root,
+                                GuiObjectField::visible) == 0 ||
+        !g_unified_ui.trampoline) {
+        return;
+    }
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    for (const auto& motion : g_end_game_credit_motion) {
+        if (!CanReadGuiObject(motion.object) ||
+            !IsDescendantOf(motion.object, g_end_game_summary_root)) {
+            continue;
+        }
+        GuiField<int>(motion.object, GuiObjectField::width) = MulDiv(
+            motion.native_width, viewport.width, LegacyCanvas::width);
+        GuiField<int>(motion.object, GuiObjectField::height) = MulDiv(
+            motion.native_height, viewport.height, LegacyCanvas::height);
+        original(motion.object,
+            MulDiv(motion.native_x, viewport.width, LegacyCanvas::width),
+            MulDiv(motion.native_y, viewport.height, LegacyCanvas::height));
+    }
+}
+
+void ScaleEndGameSummarySubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    int& width = GuiField<int>(object, GuiObjectField::width);
+    int& height = GuiField<int>(object, GuiObjectField::height);
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    if (depth == 0) {
+        ResetEndGameSummaryGeometry(object);
+        width = viewport.width;
+        height = viewport.height;
+        original(object, viewport.x, viewport.y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_end_game_summary_geometry,
+            std::size(g_end_game_summary_geometry),
+            g_end_game_summary_geometry_count, object);
+        if (native) {
+            RememberEndGameCreditMotion(object, native);
+            width = MulDiv(native->width, viewport.width,
+                           LegacyCanvas::width);
+            height = MulDiv(native->height, viewport.height,
+                            LegacyCanvas::height);
+            original(object,
+                MulDiv(native->x, viewport.width, LegacyCanvas::width),
+                MulDiv(native->y, viewport.height, LegacyCanvas::height));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        void* next = GuiPointer(child, GuiObjectField::next_sibling);
+        ScaleEndGameSummarySubtree(child, depth + 1);
+        child = next;
+    }
+}
 
 void ResetArtistProfileGeometry(void* root) {
     if (g_artist_profile_root == root) {
@@ -4259,6 +4426,22 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     new_x, new_y);
                 g_unified_ui.in_game_cg_item_notice_logged = true;
             }
+        } else if (child == g_end_game_summary_root) {
+            // The credit planes can advance their own scrolling state after
+            // construction. Initial discovery scales the complete resource;
+            // HookGuiMove transforms any later controller-driven positions.
+            RememberProcessedLayoutObject(child);
+        } else if (IsEndGameSummaryPage(child, root, width, height)) {
+            ResetEndGameSummaryGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleEndGameSummarySubtree(child);
+            RememberProcessedLayoutObject(child);
+            const RectI viewport = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width),
+                static_cast<int>(g_unified_ui.height));
+            Log("Unified UI end-game summary aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport.x, viewport.y,
+                viewport.width, viewport.height);
         } else if (child == g_unified_ui.title_screen_root &&
                    IsTitleScreenVisible()) {
             // The attract animation can restore the root rectangle or replace
@@ -5026,6 +5209,55 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             *reinterpret_cast<int*>(bytes + 0x84) = y;
         }
         return;
+    }
+    if (self == g_end_game_summary_root) {
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        GuiField<int>(self, GuiObjectField::width) = viewport.width;
+        GuiField<int>(self, GuiObjectField::height) = viewport.height;
+        original(self, viewport.x, viewport.y);
+        return;
+    }
+    if (parent && IsEndGameSummaryDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_end_game_summary_geometry,
+            std::size(g_end_game_summary_geometry),
+            g_end_game_summary_geometry_count, self);
+        if (native) {
+            GuiField<int>(self, GuiObjectField::width) = MulDiv(
+                native->width, viewport.width, LegacyCanvas::width);
+            GuiField<int>(self, GuiObjectField::height) = MulDiv(
+                native->height, viewport.height, LegacyCanvas::height);
+            if (EndGameCreditMotionState* motion =
+                    RememberEndGameCreditMotion(self, native)) {
+                const int current_x =
+                    GuiField<int>(self, GuiObjectField::x);
+                const int current_y =
+                    GuiField<int>(self, GuiObjectField::y);
+                motion->native_x = ResolveNativeAnimationCoordinate(
+                    x, current_x, motion->native_x);
+                motion->native_y = ResolveNativeAnimationCoordinate(
+                    y, current_y, motion->native_y);
+                original(self,
+                    MulDiv(motion->native_x, viewport.width,
+                           LegacyCanvas::width),
+                    MulDiv(motion->native_y, viewport.height,
+                           LegacyCanvas::height));
+                return;
+            }
+            original(self,
+                MulDiv(x, viewport.width, LegacyCanvas::width),
+                MulDiv(y, viewport.height, LegacyCanvas::height));
+            return;
+        }
     }
     if (self == g_unified_ui.title_screen_root) {
         int viewport_x = 0;
@@ -5925,6 +6157,41 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
         LogProbeBytes(target, 16);
         return false;
     }
+
+    // EndGame compares each scrolling plane's live y coordinate against a
+    // native -600 cutoff before hiding or refilling it. The plane itself is
+    // aspect-fitted, so patch that immediate to the fitted viewport height.
+    // This keeps every controller update in one coordinate space even when
+    // the game advances the animation more than once between presentations.
+    auto* credit_cutoff = reinterpret_cast<std::int32_t*>(
+        reinterpret_cast<unsigned char*>(executable) + 0xD02EB);
+    constexpr std::int32_t kNativeCreditCutoff = -600;
+    const RectI end_game_viewport = AspectFitLegacyCanvas(
+        static_cast<int>(width), static_cast<int>(height));
+    const std::int32_t fitted_credit_cutoff = -end_game_viewport.height;
+    if (*credit_cutoff != kNativeCreditCutoff &&
+        *credit_cutoff != fitted_credit_cutoff) {
+        Log("End-game credit cutoff signature mismatch at %p value=%d",
+            credit_cutoff, *credit_cutoff);
+        return false;
+    }
+    if (*credit_cutoff != fitted_credit_cutoff) {
+        DWORD cutoff_protection = 0;
+        if (!VirtualProtect(credit_cutoff, sizeof(*credit_cutoff),
+                            PAGE_EXECUTE_READWRITE, &cutoff_protection)) {
+            Log("End-game credit cutoff VirtualProtect failed error=%lu",
+                GetLastError());
+            return false;
+        }
+        *credit_cutoff = fitted_credit_cutoff;
+        DWORD ignored = 0;
+        VirtualProtect(credit_cutoff, sizeof(*credit_cutoff),
+                       cutoff_protection, &ignored);
+        FlushInstructionCache(GetCurrentProcess(), credit_cutoff,
+                              sizeof(*credit_cutoff));
+    }
+    Log("End-game credit cutoff patched %d -> %d at %p",
+        kNativeCreditCutoff, fitted_credit_cutoff, credit_cutoff);
 
     auto* resize_target = reinterpret_cast<unsigned char*>(executable) +
         0x118690;

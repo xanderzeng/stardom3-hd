@@ -23,6 +23,7 @@ bool IsDebugModeEnabled();
 bool CanReadGuiObject(const void* object);
 void RefreshUnifiedUILayout();
 void RefreshUnifiedUILayoutNow();
+void RefreshEndGameCreditsBeforeDraw();
 bool GetToolbarBackgroundRenderRect(RECT& rect, float& texture_width_ratio);
 void RefreshInGameCGOverlays(bool discover_surfaces = true);
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode);
