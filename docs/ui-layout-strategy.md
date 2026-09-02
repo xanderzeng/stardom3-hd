@@ -86,6 +86,27 @@ overwrite it. Once a dialogue,
 confirmation, countdown or question panel is visible, the event controller
 again owns the button position.
 
+`BababaCallOut` can be loaded after the ordinary layout tree has become stable,
+and entering the ringing phase only changes `BtnPhone` visibility without a
+move callback. While the overlay cache is missing or invalid, a lightweight
+250 ms discovery pass therefore checks only the primary root's direct children.
+Once the five-child resource is found, discovery stops and the retained button
+is refreshed every frame without another tree scan.
+
+The retained phone child differs from ordinary root controls: the base
+`GuiMove` routine returns without changing its canonical position fields even
+when it is passed the correct widescreen coordinate. Position maintenance and
+the live move hook preserve the native call, verify the result, and write the
+two canonical fields only when that call demonstrably rejected the move. The
+same verification runs again during first-draw maintenance so controller-side
+parking cannot survive into the rendered frame.
+
+The four post-answer panels under the same zero-sized root have the same move
+restriction. When a panel becomes visible while still parked exactly beyond
+the top-left edge, per-frame maintenance restores the panel position associated
+with its complete resource signature. Hidden panels and visible panels already
+inside the output remain controller-owned.
+
 The title tutorial reuses the same 165x100, arrow-plus-text speech-bubble
 structure as projected NPC dialogue, but its native `(320,60)` coordinate is
 relative to an 800x600 tutorial page rather than the 3D viewport. The tutorial
@@ -122,6 +143,32 @@ structure: it is a direct child of the primary root, sits at the origin, is
 approximately 802x602, and has no descendants. This leaf surface is resized to
 the complete output resolution. Legacy pages with child controls keep their
 native 800x600 size and centered placement.
+
+The end-game summary is the exception for the completion sequence. Its exact
+four-child `Main/EndGame.txt` signature (history memo, two overlapping credit
+planes, and character photo) opts the complete 800x600 subtree into the same
+4:3 aspect-fit transform as the title screen. Positions and dimensions are
+scaled together, so the character image and animated credits grow uniformly
+with the page instead of remaining at native size in the centre of a wide
+output. Later controller moves inside the credit sequence are transformed at
+the GUI move boundary without replaying the cached initial scroll position.
+The controller advances each credit plane by subtracting a small increment
+from the plane's current y coordinate. Because that current coordinate is
+already scaled, treating the submitted value as another native absolute
+position causes exponential acceleration and collapses the two planes. As
+with the title silhouette strips, each plane therefore retains an independent
+native animation coordinate. Small deltas relative to the displayed position
+advance that native state, while explicit keyframes such as the initial
+`y=600` and `y=1200` replace it; only the resulting native positions are
+aspect-fitted, preserving the authored 600-pixel separation.
+The controller also reads the live plane y coordinate and hides or refills a
+plane once it reaches a compiled `-600` cutoff. That comparison immediate is
+patched to the fitted viewport height (`-1080` at 1920x1080), keeping the
+controller and rendered plane in one coordinate space even if multiple update
+ticks occur between presentations. This prevents both premature disappearance
+and the transient centred position caused by swapping the live rectangle
+between native and scaled coordinates. First-draw maintenance still reapplies
+the fitted rectangles while an artist-summary change pauses movement.
 
 The map and save-load progress page is a different 800x600 control tree. Its
 top status badge, central artwork and bottom progress strip identify it without

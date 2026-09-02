@@ -924,6 +924,47 @@ bool IsLoadingPageRoot(void* object, void* parent, int width, int height) {
         signature.bottom_progress;
 }
 
+bool IsEndGameSummaryPage(void* object, void* parent,
+                          int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // Main/EndGame.txt is a direct-root 800x600 page with exactly four
+    // children: the history memo, two overlapping 300x600 scrolling-credit
+    // planes, and the 240x180 character photo. Match the complete resource
+    // signature so other legacy pages retain their ordinary native-size
+    // centered layout.
+    int history_memos = 0;
+    int credit_planes = 0;
+    int character_photos = 0;
+    size_t child_count = 0;
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    while (CanReadGuiObject(child) && child_count < 8) {
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
+        history_memos += child_x >= 68 && child_x <= 72 &&
+            child_y >= 354 && child_y <= 358 &&
+            child_width >= 399 && child_width <= 403 &&
+            child_height >= 209 && child_height <= 213;
+        credit_planes += child_x >= 498 && child_x <= 502 &&
+            child_y >= -2 && child_y <= 2 &&
+            child_width >= 298 && child_width <= 302 &&
+            child_height >= 598 && child_height <= 602;
+        character_photos += child_x >= 78 && child_x <= 82 &&
+            child_y >= 118 && child_y <= 122 &&
+            child_width >= 238 && child_width <= 242 &&
+            child_height >= 178 && child_height <= 182;
+        ++child_count;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return child == nullptr && child_count == 4 && history_memos == 1 &&
+        credit_planes == 2 && character_photos == 1;
+}
+
 bool IsScheduleSecondaryPanel(void* object, void* parent,
                               int width, int height) {
     // The schedule detail picker is a unique 222x381 direct-root panel. The
@@ -1826,6 +1867,19 @@ TitleNativeGeometry g_training_activity_geometry[1024]{};
 size_t g_training_activity_geometry_count = 0;
 void* g_training_activity_roots[16]{};
 size_t g_training_activity_root_count = 0;
+TitleNativeGeometry g_end_game_summary_geometry[16]{};
+size_t g_end_game_summary_geometry_count = 0;
+void* g_end_game_summary_root = nullptr;
+
+struct EndGameCreditMotionState {
+    void* object = nullptr;
+    int native_x = 500;
+    int native_y = 0;
+    int native_width = 300;
+    int native_height = 600;
+};
+
+EndGameCreditMotionState g_end_game_credit_motion[2]{};
 
 struct ArtistRadarVertexCache {
     float x[7][4]{};
@@ -1836,6 +1890,119 @@ struct ArtistRadarVertexCache {
 ArtistRadarVertexCache g_artist_radar_vertices;
 
 bool IsCachedAnnouncementRootValid();
+
+void ResetEndGameSummaryGeometry(void* root) {
+    if (g_end_game_summary_root == root) {
+        return;
+    }
+    g_end_game_summary_root = root;
+    g_end_game_summary_geometry_count = 0;
+    for (auto& motion : g_end_game_credit_motion) {
+        motion = {};
+    }
+}
+
+bool IsEndGameSummaryDescendant(void* object) {
+    return IsDescendantOf(object, g_end_game_summary_root);
+}
+
+bool IsEndGameCreditGeometry(const TitleNativeGeometry* native) {
+    return native && native->x >= 498 && native->x <= 502 &&
+        native->y >= -2 && native->y <= 2 &&
+        native->width >= 298 && native->width <= 302 &&
+        native->height >= 598 && native->height <= 602;
+}
+
+EndGameCreditMotionState* RememberEndGameCreditMotion(
+        void* object, const TitleNativeGeometry* native) {
+    if (!object || !IsEndGameCreditGeometry(native)) {
+        return nullptr;
+    }
+    for (auto& motion : g_end_game_credit_motion) {
+        if (motion.object == object) {
+            return &motion;
+        }
+    }
+    for (auto& motion : g_end_game_credit_motion) {
+        if (!motion.object) {
+            motion.object = object;
+            motion.native_x = native->x;
+            motion.native_y = native->y;
+            motion.native_width = native->width;
+            motion.native_height = native->height;
+            return &motion;
+        }
+    }
+    return nullptr;
+}
+
+void RefreshEndGameCreditsBeforeDraw() {
+    if (!CanReadGuiObject(g_end_game_summary_root) ||
+        GuiField<unsigned char>(g_end_game_summary_root,
+                                GuiObjectField::visible) == 0 ||
+        !g_unified_ui.trampoline) {
+        return;
+    }
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    for (const auto& motion : g_end_game_credit_motion) {
+        if (!CanReadGuiObject(motion.object) ||
+            !IsDescendantOf(motion.object, g_end_game_summary_root)) {
+            continue;
+        }
+        GuiField<int>(motion.object, GuiObjectField::width) = MulDiv(
+            motion.native_width, viewport.width, LegacyCanvas::width);
+        GuiField<int>(motion.object, GuiObjectField::height) = MulDiv(
+            motion.native_height, viewport.height, LegacyCanvas::height);
+        original(motion.object,
+            MulDiv(motion.native_x, viewport.width, LegacyCanvas::width),
+            MulDiv(motion.native_y, viewport.height, LegacyCanvas::height));
+    }
+}
+
+void ScaleEndGameSummarySubtree(void* object, int depth = 0) {
+    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+        return;
+    }
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    int& width = GuiField<int>(object, GuiObjectField::width);
+    int& height = GuiField<int>(object, GuiObjectField::height);
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    if (depth == 0) {
+        ResetEndGameSummaryGeometry(object);
+        width = viewport.width;
+        height = viewport.height;
+        original(object, viewport.x, viewport.y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            g_end_game_summary_geometry,
+            std::size(g_end_game_summary_geometry),
+            g_end_game_summary_geometry_count, object);
+        if (native) {
+            RememberEndGameCreditMotion(object, native);
+            width = MulDiv(native->width, viewport.width,
+                           LegacyCanvas::width);
+            height = MulDiv(native->height, viewport.height,
+                            LegacyCanvas::height);
+            original(object,
+                MulDiv(native->x, viewport.width, LegacyCanvas::width),
+                MulDiv(native->y, viewport.height, LegacyCanvas::height));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        void* next = GuiPointer(child, GuiObjectField::next_sibling);
+        ScaleEndGameSummarySubtree(child, depth + 1);
+        child = next;
+    }
+}
 
 void ResetArtistProfileGeometry(void* root) {
     if (g_artist_profile_root == root) {
@@ -3475,9 +3642,12 @@ bool IsAirportSelectionScreenVisible() {
 
 void* g_phone_overlay_root = nullptr;
 void* g_phone_overlay_button = nullptr;
+ULONGLONG g_phone_overlay_last_discovery_tick = 0;
 void* g_toolbar_root = nullptr;
 ULONGLONG g_toolbar_last_slot_refresh_tick = 0;
 GuiResizeFn g_gui_resize = nullptr;
+
+void ReflowExistingRootChildren(void* root, int depth);
 
 void* FindPhoneOverlayButton(void* object, void* parent,
                              int width, int height) {
@@ -3529,9 +3699,59 @@ void RememberPhoneOverlay(void* root, void* button) {
     g_phone_overlay_button = button;
 }
 
-bool IsPhoneOverlayRinging() {
+bool IsCachedPhoneOverlayValid() {
     if (!CanReadGuiObject(g_phone_overlay_root) ||
         !CanReadGuiObject(g_phone_overlay_button)) {
+        return false;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
+    return *reinterpret_cast<void**>(root_bytes + 0xF0) ==
+            g_unified_ui.primary_root &&
+        *reinterpret_cast<void**>(button_bytes + 0xF0) ==
+            g_phone_overlay_root &&
+        *reinterpret_cast<int*>(button_bytes + 0x88) == 40 &&
+        *reinterpret_cast<int*>(button_bytes + 0x8C) == 40;
+}
+
+void DiscoverPhoneOverlay(ULONGLONG now) {
+    if (IsCachedPhoneOverlayValid() ||
+        !CanReadGuiObject(g_unified_ui.primary_root)) {
+        return;
+    }
+
+    constexpr ULONGLONG kPhoneOverlayDiscoveryIntervalMs = 250;
+    if (g_phone_overlay_last_discovery_tick != 0 &&
+        now - g_phone_overlay_last_discovery_tick <
+            kPhoneOverlayDiscoveryIntervalMs) {
+        return;
+    }
+    g_phone_overlay_last_discovery_tick = now;
+    g_phone_overlay_root = nullptr;
+    g_phone_overlay_button = nullptr;
+
+    auto* primary_bytes =
+        static_cast<unsigned char*>(g_unified_ui.primary_root);
+    void* child = *reinterpret_cast<void**>(primary_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 4096) {
+        auto* child_bytes = static_cast<unsigned char*>(child);
+        void* next = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        const int width = *reinterpret_cast<int*>(child_bytes + 0x88);
+        const int height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        if (void* phone_button = FindPhoneOverlayButton(
+                child, g_unified_ui.primary_root, width, height)) {
+            RememberPhoneOverlay(child, phone_button);
+            RememberLayoutRoot(child);
+            ReflowExistingRootChildren(child, 1);
+            return;
+        }
+        child = next;
+    }
+}
+
+bool IsPhoneOverlayRinging() {
+    if (!IsCachedPhoneOverlayValid()) {
         return false;
     }
     auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
@@ -3565,37 +3785,262 @@ bool IsPhoneOverlayRinging() {
     return child == nullptr;
 }
 
+bool IsPhoneOverlayButtonVisible() {
+    if (!IsCachedPhoneOverlayValid()) {
+        return false;
+    }
+    return *(static_cast<unsigned char*>(g_phone_overlay_button) + 0x99) != 0;
+}
+
+bool IsPhoneOverlayDialogueVisible() {
+    if (!IsCachedPhoneOverlayValid()) {
+        return false;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    if (*(root_bytes + 0x99) == 0) {
+        return false;
+    }
+    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 6) {
+        auto* child_bytes = static_cast<unsigned char*>(child);
+        if (child != g_phone_overlay_button && *(child_bytes + 0x99) != 0) {
+            return true;
+        }
+        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    }
+    return false;
+}
+
+void LogPhoneOverlayStateIfChanged() {
+    if (!IsDebugModeEnabled()) {
+        return;
+    }
+
+    struct PhoneOverlayDiagnosticState {
+        void* root = nullptr;
+        void* button = nullptr;
+        int x = 0;
+        int y = 0;
+        unsigned char root_visible = 0;
+        unsigned char button_visible = 0;
+        unsigned int sibling_visible_mask = 0;
+        bool announcement_active = false;
+        bool valid = false;
+    };
+    static PhoneOverlayDiagnosticState previous{};
+    static bool initialized = false;
+
+    PhoneOverlayDiagnosticState current{};
+    current.root = g_phone_overlay_root;
+    current.button = g_phone_overlay_button;
+    current.announcement_active = g_unified_ui.announcement_active;
+    current.valid = IsCachedPhoneOverlayValid();
+    if (current.valid) {
+        auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+        auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
+        current.x = *reinterpret_cast<int*>(button_bytes + 0x80);
+        current.y = *reinterpret_cast<int*>(button_bytes + 0x84);
+        current.root_visible = *(root_bytes + 0x99);
+        current.button_visible = *(button_bytes + 0x99);
+        void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+        size_t index = 0;
+        while (CanReadGuiObject(child) && index < 5) {
+            auto* child_bytes = static_cast<unsigned char*>(child);
+            if (child != g_phone_overlay_button &&
+                *(child_bytes + 0x99) != 0) {
+                current.sibling_visible_mask |= 1u << index;
+            }
+            child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+            ++index;
+        }
+    }
+
+    const bool changed = !initialized || current.root != previous.root ||
+        current.button != previous.button || current.x != previous.x ||
+        current.y != previous.y ||
+        current.root_visible != previous.root_visible ||
+        current.button_visible != previous.button_visible ||
+        current.sibling_visible_mask != previous.sibling_visible_mask ||
+        current.announcement_active != previous.announcement_active ||
+        current.valid != previous.valid;
+    if (changed) {
+        Log("Phone overlay state valid=%d root=%p visible=%u button=%p visible=%u "
+            "pos=%d,%d siblings=0x%02X announcement=%d ringing=%d",
+            current.valid ? 1 : 0, current.root,
+            static_cast<unsigned int>(current.root_visible), current.button,
+            static_cast<unsigned int>(current.button_visible),
+            current.x, current.y, current.sibling_visible_mask,
+            current.announcement_active ? 1 : 0,
+            IsPhoneOverlayRinging() ? 1 : 0);
+        if (current.valid &&
+            (!initialized || current.sibling_visible_mask !=
+                previous.sibling_visible_mask)) {
+            auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+            void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+            size_t index = 0;
+            while (CanReadGuiObject(child) && index < 5) {
+                auto* child_bytes = static_cast<unsigned char*>(child);
+                Log("Phone overlay child #%zu self=%p button=%d visible=%u "
+                    "rect=%d,%d %dx%d",
+                    index, child, child == g_phone_overlay_button ? 1 : 0,
+                    static_cast<unsigned int>(*(child_bytes + 0x99)),
+                    *reinterpret_cast<int*>(child_bytes + 0x80),
+                    *reinterpret_cast<int*>(child_bytes + 0x84),
+                    *reinterpret_cast<int*>(child_bytes + 0x88),
+                    *reinterpret_cast<int*>(child_bytes + 0x8C));
+                child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+                ++index;
+            }
+        }
+        previous = current;
+        initialized = true;
+    }
+}
+
 void GetPhoneOverlayButtonPosition(int& x, int& y) {
     x = 3;
     y = 558;
     TransformRootChildPosition(40, 40, x, y);
 }
 
-void RefreshPhoneOverlayButton() {
-    if (!g_unified_ui.trampoline || !IsPhoneOverlayRinging()) {
+bool GetPhoneOverlayDialoguePanelPosition(
+        int width, int height, int& x, int& y) {
+    if (width == 605 && height == 178) {
+        x = 84;
+        y = 390;
+    } else if (width == 40 && height == 40) {
+        x = 590;
+        y = 116;
+    } else if (width == 338 && height == 143) {
+        x = 232;
+        y = 346;
+    } else if (width == 480 && height == 380) {
+        x = 160;
+        y = 110;
+    } else {
+        return false;
+    }
+    TransformRootChildPosition(width, height, x, y);
+    return true;
+}
+
+void RefreshPhoneOverlayDialoguePanels(const char* phase) {
+    if (!g_unified_ui.trampoline || !IsCachedPhoneOverlayValid()) {
+        return;
+    }
+    auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
+    if (*(root_bytes + 0x99) == 0) {
+        return;
+    }
+
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 6) {
+        auto* bytes = static_cast<unsigned char*>(child);
+        void* next = *reinterpret_cast<void**>(bytes + 0xF8);
+        if (child != g_phone_overlay_button && *(bytes + 0x99) != 0) {
+            const int width = *reinterpret_cast<int*>(bytes + 0x88);
+            const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+            const int old_x = *reinterpret_cast<int*>(bytes + 0x80);
+            const int old_y = *reinterpret_cast<int*>(bytes + 0x84);
+            const bool parked = old_x + width <= 0 || old_y + height <= 0;
+            int target_x = 0;
+            int target_y = 0;
+            if (parked && GetPhoneOverlayDialoguePanelPosition(
+                    width, height, target_x, target_y)) {
+                original(child, target_x, target_y);
+                const int moved_x = *reinterpret_cast<int*>(bytes + 0x80);
+                const int moved_y = *reinterpret_cast<int*>(bytes + 0x84);
+                const bool rejected = moved_x != target_x || moved_y != target_y;
+                if (rejected) {
+                    *reinterpret_cast<int*>(bytes + 0x80) = target_x;
+                    *reinterpret_cast<int*>(bytes + 0x84) = target_y;
+                }
+                if (IsDebugModeEnabled()) {
+                    Log("Phone overlay dialogue refresh phase=%s self=%p "
+                        "before=%d,%d size=%dx%d target=%d,%d rejected=%d "
+                        "final=%d,%d",
+                        phase, child, old_x, old_y, width, height,
+                        target_x, target_y, rejected ? 1 : 0,
+                        *reinterpret_cast<int*>(bytes + 0x80),
+                        *reinterpret_cast<int*>(bytes + 0x84));
+                }
+                RememberProcessedLayoutObject(child);
+            }
+        }
+        child = next;
+    }
+}
+
+void RefreshPhoneOverlayButton(const char* phase) {
+    const bool debug = IsDebugModeEnabled();
+    const bool valid = IsCachedPhoneOverlayValid();
+    const bool ringing = valid && IsPhoneOverlayRinging();
+    if (!g_unified_ui.trampoline || !ringing) {
+        if (debug && valid && IsPhoneOverlayButtonVisible()) {
+            static bool skip_logged = false;
+            if (!skip_logged) {
+                auto* button_bytes =
+                    static_cast<unsigned char*>(g_phone_overlay_button);
+                Log("Phone overlay refresh phase=%s skipped trampoline=%p "
+                    "ringing=%d pos=%d,%d",
+                    phase, g_unified_ui.trampoline, ringing ? 1 : 0,
+                    *reinterpret_cast<int*>(button_bytes + 0x80),
+                    *reinterpret_cast<int*>(button_bytes + 0x84));
+                skip_logged = true;
+            }
+        }
         return;
     }
 
     auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
-    const int x = *reinterpret_cast<int*>(button_bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(button_bytes + 0x84);
-    const int width = *reinterpret_cast<int*>(button_bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(button_bytes + 0x8C);
-    const bool off_screen = x + width <= 0 || y + height <= 0 ||
-        x >= static_cast<int>(g_unified_ui.width) ||
-        y >= static_cast<int>(g_unified_ui.height);
-    const bool authored_position = x >= 0 && x <= 8 &&
-        y >= 550 && y <= 565;
-    if (!off_screen && !authored_position) {
-        return;
-    }
-
     int target_x = 0;
     int target_y = 0;
     GetPhoneOverlayButtonPosition(target_x, target_y);
+    const int x = *reinterpret_cast<int*>(button_bytes + 0x80);
+    const int y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    if (x == target_x && y == target_y) {
+        return;
+    }
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     original(g_phone_overlay_button, target_x, target_y);
+    int after_x = *reinterpret_cast<int*>(button_bytes + 0x80);
+    int after_y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    const bool move_rejected = after_x != target_x || after_y != target_y;
+    if (move_rejected) {
+        // BtnPhone is retained under BababaCallOut's zero-sized structural
+        // root. The base GuiMove routine returns without updating this child,
+        // even though ordinary root children accept the same output-space
+        // coordinates. Its renderer consumes these canonical position fields,
+        // so preserve the base call and only fall back when it demonstrably
+        // rejected the requested move.
+        *reinterpret_cast<int*>(button_bytes + 0x80) = target_x;
+        *reinterpret_cast<int*>(button_bytes + 0x84) = target_y;
+        after_x = target_x;
+        after_y = target_y;
+    }
+    if (debug) {
+        static unsigned int attempt_count = 0;
+        if (attempt_count < 32) {
+            ++attempt_count;
+            Log("Phone overlay refresh phase=%s attempt=%u before=%d,%d "
+                "target=%d,%d rejected=%d final=%d,%d",
+                phase, attempt_count, x, y, target_x, target_y,
+                move_rejected ? 1 : 0,
+                after_x, after_y);
+        }
+    }
     RememberProcessedLayoutObject(g_phone_overlay_button);
+}
+
+void RefreshPhoneOverlayButtonBeforeDraw() {
+    RefreshPhoneOverlayButton("first-draw");
+    RefreshPhoneOverlayDialoguePanels("first-draw");
+    if (IsDebugModeEnabled()) {
+        LogPhoneOverlayStateIfChanged();
+    }
 }
 
 int CountVisibleToolbarSlots(void* object, void* parent,
@@ -3981,6 +4426,22 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     new_x, new_y);
                 g_unified_ui.in_game_cg_item_notice_logged = true;
             }
+        } else if (child == g_end_game_summary_root) {
+            // The credit planes can advance their own scrolling state after
+            // construction. Initial discovery scales the complete resource;
+            // HookGuiMove transforms any later controller-driven positions.
+            RememberProcessedLayoutObject(child);
+        } else if (IsEndGameSummaryPage(child, root, width, height)) {
+            ResetEndGameSummaryGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleEndGameSummarySubtree(child);
+            RememberProcessedLayoutObject(child);
+            const RectI viewport = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width),
+                static_cast<int>(g_unified_ui.height));
+            Log("Unified UI end-game summary aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport.x, viewport.y,
+                viewport.width, viewport.height);
         } else if (child == g_unified_ui.title_screen_root &&
                    IsTitleScreenVisible()) {
             // The attract animation can restore the root rectangle or replace
@@ -4513,7 +4974,12 @@ void RefreshUnifiedUILayout() {
     GuiObjectReadBatch read_batch;
     const ULONGLONG now = GetTickCount64();
     RefreshToolbarSlots(now);
-    RefreshPhoneOverlayButton();
+    DiscoverPhoneOverlay(now);
+    if (IsDebugModeEnabled()) {
+        LogPhoneOverlayStateIfChanged();
+    }
+    RefreshPhoneOverlayButton("begin-scene");
+    RefreshPhoneOverlayDialoguePanels("begin-scene");
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
     // Closing an already discovered announcement is a direct visibility-byte
@@ -4737,7 +5203,61 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             GetPhoneOverlayButtonPosition(x, y);
         }
         original(self, x, y);
+        if (*reinterpret_cast<int*>(bytes + 0x80) != x ||
+            *reinterpret_cast<int*>(bytes + 0x84) != y) {
+            *reinterpret_cast<int*>(bytes + 0x80) = x;
+            *reinterpret_cast<int*>(bytes + 0x84) = y;
+        }
         return;
+    }
+    if (self == g_end_game_summary_root) {
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        GuiField<int>(self, GuiObjectField::width) = viewport.width;
+        GuiField<int>(self, GuiObjectField::height) = viewport.height;
+        original(self, viewport.x, viewport.y);
+        return;
+    }
+    if (parent && IsEndGameSummaryDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_end_game_summary_geometry,
+            std::size(g_end_game_summary_geometry),
+            g_end_game_summary_geometry_count, self);
+        if (native) {
+            GuiField<int>(self, GuiObjectField::width) = MulDiv(
+                native->width, viewport.width, LegacyCanvas::width);
+            GuiField<int>(self, GuiObjectField::height) = MulDiv(
+                native->height, viewport.height, LegacyCanvas::height);
+            if (EndGameCreditMotionState* motion =
+                    RememberEndGameCreditMotion(self, native)) {
+                const int current_x =
+                    GuiField<int>(self, GuiObjectField::x);
+                const int current_y =
+                    GuiField<int>(self, GuiObjectField::y);
+                motion->native_x = ResolveNativeAnimationCoordinate(
+                    x, current_x, motion->native_x);
+                motion->native_y = ResolveNativeAnimationCoordinate(
+                    y, current_y, motion->native_y);
+                original(self,
+                    MulDiv(motion->native_x, viewport.width,
+                           LegacyCanvas::width),
+                    MulDiv(motion->native_y, viewport.height,
+                           LegacyCanvas::height));
+                return;
+            }
+            original(self,
+                MulDiv(x, viewport.width, LegacyCanvas::width),
+                MulDiv(y, viewport.height, LegacyCanvas::height));
+            return;
+        }
     }
     if (self == g_unified_ui.title_screen_root) {
         int viewport_x = 0;
@@ -5637,6 +6157,41 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
         LogProbeBytes(target, 16);
         return false;
     }
+
+    // EndGame compares each scrolling plane's live y coordinate against a
+    // native -600 cutoff before hiding or refilling it. The plane itself is
+    // aspect-fitted, so patch that immediate to the fitted viewport height.
+    // This keeps every controller update in one coordinate space even when
+    // the game advances the animation more than once between presentations.
+    auto* credit_cutoff = reinterpret_cast<std::int32_t*>(
+        reinterpret_cast<unsigned char*>(executable) + 0xD02EB);
+    constexpr std::int32_t kNativeCreditCutoff = -600;
+    const RectI end_game_viewport = AspectFitLegacyCanvas(
+        static_cast<int>(width), static_cast<int>(height));
+    const std::int32_t fitted_credit_cutoff = -end_game_viewport.height;
+    if (*credit_cutoff != kNativeCreditCutoff &&
+        *credit_cutoff != fitted_credit_cutoff) {
+        Log("End-game credit cutoff signature mismatch at %p value=%d",
+            credit_cutoff, *credit_cutoff);
+        return false;
+    }
+    if (*credit_cutoff != fitted_credit_cutoff) {
+        DWORD cutoff_protection = 0;
+        if (!VirtualProtect(credit_cutoff, sizeof(*credit_cutoff),
+                            PAGE_EXECUTE_READWRITE, &cutoff_protection)) {
+            Log("End-game credit cutoff VirtualProtect failed error=%lu",
+                GetLastError());
+            return false;
+        }
+        *credit_cutoff = fitted_credit_cutoff;
+        DWORD ignored = 0;
+        VirtualProtect(credit_cutoff, sizeof(*credit_cutoff),
+                       cutoff_protection, &ignored);
+        FlushInstructionCache(GetCurrentProcess(), credit_cutoff,
+                              sizeof(*credit_cutoff));
+    }
+    Log("End-game credit cutoff patched %d -> %d at %p",
+        kNativeCreditCutoff, fitted_credit_cutoff, credit_cutoff);
 
     auto* resize_target = reinterpret_cast<unsigned char*>(executable) +
         0x118690;
