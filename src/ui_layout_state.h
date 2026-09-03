@@ -89,6 +89,7 @@ struct LayoutContext {
         bool closing = false;
     } toolbar_sequences[4]{};
     int toolbar_width = 320;
+    HMODULE executable_base = nullptr;
     void* trampoline = nullptr;
     void* announcement_discovery_root = nullptr;
     void* announcement_discovery_cursor = nullptr;

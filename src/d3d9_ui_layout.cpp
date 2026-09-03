@@ -1263,9 +1263,6 @@ bool IsPhotoAlbumRoot(void* object, void* parent, int width, int height) {
     return filmstrip && book_page && exit_button;
 }
 
-void GetPhotoAlbumViewport(UINT output_width, UINT output_height,
-                           int& x, int& y, int& width, int& height);
-
 bool IsInGameCGRoot(void* object, void* parent, int width, int height) {
     // Story CGs are a direct-root 800x600 page containing exactly two
     // childless 800x600 image surfaces (the current and next frame). This is
@@ -1374,12 +1371,9 @@ bool IsInGameCGVisible() {
 }
 
 void GetInGameCGCaptionPosition(int native_y, int& x, int& y) {
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     // Match the photo-album CG caption treatment: preserve the complete
     // authored 800x600 overlay and translate it as one native-size canvas.
     // Do not scale y through the aspect-fit image viewport; doing so feeds an
@@ -1530,12 +1524,9 @@ void LayoutInGameCGRoot(void* object) {
         return;
     }
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     auto* bytes = static_cast<unsigned char*>(object);
     *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
     *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
@@ -1747,12 +1738,9 @@ void UpdateTitleStripMotion(ULONGLONG now) {
             g_title_strip_motion.primary_native_x + 2000 :
             g_title_strip_motion.primary_native_x - 2000;
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     TitleNativeGeometry* primary =
         FindTitleNativeGeometry(g_title_strip_motion.primary_object);
@@ -1762,11 +1750,11 @@ void UpdateTitleStripMotion(ULONGLONG now) {
         return;
     }
     original(g_title_strip_motion.primary_object,
-        MulDiv(g_title_strip_motion.primary_native_x, viewport_width, 800),
-        MulDiv(primary->y, viewport_height, 600));
+        MulDiv(g_title_strip_motion.primary_native_x, viewport_width, LegacyCanvas::width),
+        MulDiv(primary->y, viewport_height, LegacyCanvas::height));
     original(g_title_strip_motion.follower_object,
-        MulDiv(g_title_strip_motion.follower_native_x, viewport_width, 800),
-        MulDiv(follower->y, viewport_height, 600));
+        MulDiv(g_title_strip_motion.follower_native_x, viewport_width, LegacyCanvas::width),
+        MulDiv(follower->y, viewport_height, LegacyCanvas::height));
 }
 
 void ScaleTitleScreenSubtree(void* object, int depth = 0) {
@@ -1777,12 +1765,9 @@ void ScaleTitleScreenSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetTitleNativeGeometry(object);
         width = viewport_width;
@@ -1793,15 +1778,15 @@ void ScaleTitleScreenSubtree(void* object, int depth = 0) {
         TitleNativeGeometry* native = RememberTitleNativeGeometry(object);
         RegisterTitleStrip(object, native);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             // Existing objects may currently be between animation keyframes.
             // Only translate a newly discovered object here; later movement is
             // handled by HookGuiMove without snapping the animation backward.
             if (newly_discovered) {
                 original(object,
-                    MulDiv(native->x, viewport_width, 800),
-                    MulDiv(native->y, viewport_height, 600));
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
             }
         }
     }
@@ -2091,12 +2076,9 @@ void CorrectArtistRadarVertices() {
         return;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     const float scale_x = static_cast<float>(viewport_width) / 800.0f;
     const float scale_y = static_cast<float>(viewport_height) / 600.0f;
     const auto transform_x = [&](float raw_x) {
@@ -2125,12 +2107,9 @@ void ScaleArtistProfileSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetArtistProfileGeometry(object);
         width = viewport_width;
@@ -2142,11 +2121,11 @@ void ScaleArtistProfileSubtree(void* object, int depth = 0) {
             std::size(g_artist_profile_geometry),
             g_artist_profile_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2181,12 +2160,9 @@ void ScaleArtistContractSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetArtistContractGeometry(object);
         width = viewport_width;
@@ -2198,11 +2174,11 @@ void ScaleArtistContractSubtree(void* object, int depth = 0) {
             std::size(g_artist_contract_geometry),
             g_artist_contract_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2237,12 +2213,9 @@ void ScaleArtistSigningSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetArtistSigningGeometry(object);
         width = viewport_width;
@@ -2254,11 +2227,11 @@ void ScaleArtistSigningSubtree(void* object, int depth = 0) {
             std::size(g_artist_signing_geometry),
             g_artist_signing_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2300,12 +2273,9 @@ void ScaleAirportSelectionSubtree(void* object, int depth = 0) {
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     int& width = GuiField<int>(object, GuiObjectField::width);
     int& height = GuiField<int>(object, GuiObjectField::height);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetAirportSelectionGeometry(object);
         width = viewport_width;
@@ -2322,11 +2292,11 @@ void ScaleAirportSelectionSubtree(void* object, int depth = 0) {
                 height = native->height;
                 original(object, native->x, native->y);
             } else {
-                width = MulDiv(native->width, viewport_width, 800);
-                height = MulDiv(native->height, viewport_height, 600);
+                width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
                 original(object,
-                    MulDiv(native->x, viewport_width, 800),
-                    MulDiv(native->y, viewport_height, 600));
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
             }
         }
     }
@@ -2361,12 +2331,9 @@ void ScaleStudioEventListSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetStudioEventListGeometry(object);
         width = viewport_width;
@@ -2378,11 +2345,11 @@ void ScaleStudioEventListSubtree(void* object, int depth = 0) {
             std::size(g_studio_event_list_geometry),
             g_studio_event_list_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2417,12 +2384,9 @@ void ScaleStudioEventEditorSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetStudioEventEditorGeometry(object);
         width = viewport_width;
@@ -2434,11 +2398,11 @@ void ScaleStudioEventEditorSubtree(void* object, int depth = 0) {
             std::size(g_studio_event_editor_geometry),
             g_studio_event_editor_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2547,31 +2511,28 @@ void ScaleStudioEventDropdownSubtree(void* object,
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         width = MulDiv(layout.native_width,
-            viewport_width, 800);
+            viewport_width, LegacyCanvas::width);
         height = MulDiv(layout.native_height,
-            viewport_height, 600);
+            viewport_height, LegacyCanvas::height);
         original(object,
-            viewport_x + MulDiv(native_root_x, viewport_width, 800),
-            viewport_y + MulDiv(native_root_y, viewport_height, 600));
+            viewport_x + MulDiv(native_root_x, viewport_width, LegacyCanvas::width),
+            viewport_y + MulDiv(native_root_y, viewport_height, LegacyCanvas::height));
     } else {
         TitleNativeGeometry* native = RememberGeometry(
             layout.geometry,
             std::size(layout.geometry),
             layout.geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2652,12 +2613,9 @@ bool IsTrainingActivityPage(void* object, void* parent,
         !CanReadGuiObject(object) || parent != g_unified_ui.primary_root) {
         return false;
     }
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     const bool native_page = width >= 798 && width <= 802 &&
         height >= 598 && height <= 602;
     const bool scaled_page = std::abs(width - viewport_width) <= 2 &&
@@ -2684,10 +2642,10 @@ bool IsTrainingActivityPage(void* object, void* parent,
              child_width >= 398 && child_width <= 402 &&
              child_height >= 298 && child_height <= 302) ||
             (scaled_page &&
-             std::abs(child_x - MulDiv(200, viewport_width, 800)) <= 2 &&
-             std::abs(child_y - MulDiv(175, viewport_height, 600)) <= 2 &&
-             std::abs(child_width - MulDiv(400, viewport_width, 800)) <= 2 &&
-             std::abs(child_height - MulDiv(300, viewport_height, 600)) <= 2)) {
+             std::abs(child_x - MulDiv(200, viewport_width, LegacyCanvas::width)) <= 2 &&
+             std::abs(child_y - MulDiv(175, viewport_height, LegacyCanvas::height)) <= 2 &&
+             std::abs(child_width - MulDiv(400, viewport_width, LegacyCanvas::width)) <= 2 &&
+             std::abs(child_height - MulDiv(300, viewport_height, LegacyCanvas::height)) <= 2)) {
             ++playfields;
         }
         child = *reinterpret_cast<void**>(bytes + 0xF8);
@@ -2703,12 +2661,9 @@ void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         // The minigame frame is authored at (187,126). Generic root-child
         // anchoring may already have added the centred legacy-canvas offset;
@@ -2717,22 +2672,22 @@ void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
         constexpr int kNativeX = 187;
         constexpr int kNativeY = 126;
         ResetTrainingMinigameGeometry(object);
-        width = MulDiv(426, viewport_width, 800);
-        height = MulDiv(369, viewport_height, 600);
+        width = MulDiv(426, viewport_width, LegacyCanvas::width);
+        height = MulDiv(369, viewport_height, LegacyCanvas::height);
         original(object,
-            viewport_x + MulDiv(kNativeX, viewport_width, 800),
-            viewport_y + MulDiv(kNativeY, viewport_height, 600));
+            viewport_x + MulDiv(kNativeX, viewport_width, LegacyCanvas::width),
+            viewport_y + MulDiv(kNativeY, viewport_height, LegacyCanvas::height));
     } else {
         TitleNativeGeometry* native = RememberGeometry(
             g_training_minigame_geometry,
             std::size(g_training_minigame_geometry),
             g_training_minigame_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2755,12 +2710,9 @@ void ScaleTrainingActivitySubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         if (!RememberTrainingActivityRoot(object)) {
             return;
@@ -2774,11 +2726,11 @@ void ScaleTrainingActivitySubtree(void* object, int depth = 0) {
             std::size(g_training_activity_geometry),
             g_training_activity_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2813,12 +2765,9 @@ void ScaleTitleTutorialSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetTitleTutorialGeometry(object);
         width = viewport_width;
@@ -2830,11 +2779,11 @@ void ScaleTitleTutorialSubtree(void* object, int depth = 0) {
             std::size(g_title_tutorial_geometry),
             g_title_tutorial_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2865,21 +2814,18 @@ void ScaleTitleTutorialBubbleSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     TitleNativeGeometry* native = RememberGeometry(
         g_title_tutorial_bubble_geometry,
         std::size(g_title_tutorial_bubble_geometry),
         g_title_tutorial_bubble_geometry_count, object);
     if (native) {
-        width = MulDiv(native->width, viewport_width, 800);
-        height = MulDiv(native->height, viewport_height, 600);
-        const int scaled_x = MulDiv(native->x, viewport_width, 800);
-        const int scaled_y = MulDiv(native->y, viewport_height, 600);
+        width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+        height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+        const int scaled_x = MulDiv(native->x, viewport_width, LegacyCanvas::width);
+        const int scaled_y = MulDiv(native->y, viewport_height, LegacyCanvas::height);
         original(object,
             depth == 0 ? viewport_x + scaled_x : scaled_x,
             depth == 0 ? viewport_y + scaled_y : scaled_y);
@@ -2916,12 +2862,9 @@ void ScaleTitleTutorialQuestionSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetTitleTutorialQuestionGeometry(object);
         width = viewport_width;
@@ -2933,11 +2876,11 @@ void ScaleTitleTutorialQuestionSubtree(void* object, int depth = 0) {
             std::size(g_title_tutorial_question_geometry),
             g_title_tutorial_question_geometry_count, object);
         if (native) {
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -2965,12 +2908,9 @@ size_t DetectAnnouncementArtistCount(void* root) {
     if (!CanReadGuiObject(root)) {
         return 0;
     }
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     size_t visible_result_cards = 0;
     size_t visited = 0;
     void* child = *reinterpret_cast<void**>(
@@ -2982,10 +2922,10 @@ size_t DetectAnnouncementArtistCount(void* root) {
         const bool result_card =
             (width >= 95 && width <= 105 &&
              height >= 115 && height <= 125) ||
-            (width >= MulDiv(95, viewport_width, 800) &&
-             width <= MulDiv(105, viewport_width, 800) &&
-             height >= MulDiv(115, viewport_height, 600) &&
-             height <= MulDiv(125, viewport_height, 600));
+            (width >= MulDiv(95, viewport_width, LegacyCanvas::width) &&
+             width <= MulDiv(105, viewport_width, LegacyCanvas::width) &&
+             height >= MulDiv(115, viewport_height, LegacyCanvas::height) &&
+             height <= MulDiv(125, viewport_height, LegacyCanvas::height));
         if (result_card && *(bytes + 0x99) != 0) {
             ++visible_result_cards;
         }
@@ -3030,12 +2970,9 @@ void ScaleAnnouncementSubtree(void* object, int depth = 0) {
     auto* bytes = static_cast<unsigned char*>(object);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         ResetAnnouncementGeometry(object);
         const size_t artist_count = DetectAnnouncementArtistCount(object);
@@ -3059,11 +2996,11 @@ void ScaleAnnouncementSubtree(void* object, int depth = 0) {
                 GetFirstAnnouncementCaptionPosition(
                     g_announcement_artist_count, native->x, native->y);
             }
-            width = MulDiv(native->width, viewport_width, 800);
-            height = MulDiv(native->height, viewport_height, 600);
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(object,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
         }
     }
     RememberProcessedLayoutObject(object);
@@ -3104,12 +3041,9 @@ bool IsPhotoAlbumCGVisible() {
     const int y = *reinterpret_cast<int*>(canvas_bytes + 0x84);
     const int width = *reinterpret_cast<int*>(canvas_bytes + 0x88);
     const int height = *reinterpret_cast<int*>(canvas_bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     return *(canvas_bytes + 0x99) != 0 && x == 0 && y == 0 &&
         width == viewport_width && height == viewport_height;
 }
@@ -3157,8 +3091,8 @@ bool TransformPhotoAlbumCarouselFrame(void* object, void* call_site,
             sequence->object = object;
             sequence->active = false;
         }
-        x = MulDiv(x, viewport_width, 800);
-        y = MulDiv(y, viewport_height, 600);
+        x = MulDiv(x, viewport_width, LegacyCanvas::width);
+        y = MulDiv(y, viewport_height, LegacyCanvas::height);
 
         bool any_active = false;
         for (const auto& candidate : g_unified_ui.photo_album_sequences) {
@@ -3171,8 +3105,8 @@ bool TransformPhotoAlbumCarouselFrame(void* object, void* call_site,
     }
 
     if (!sequence) {
-        x = MulDiv(x, viewport_width, 800);
-        y = MulDiv(y, viewport_height, 600);
+        x = MulDiv(x, viewport_width, LegacyCanvas::width);
+        y = MulDiv(y, viewport_height, LegacyCanvas::height);
         return false;
     }
     if (!sequence->object) {
@@ -3206,9 +3140,9 @@ bool TransformPhotoAlbumCarouselFrame(void* object, void* call_site,
             mixed_denominator : 1.0;
     progress = std::clamp(progress, 0.0, 1.0);
     const int target_x = MulDiv(
-        sequence->target_native_x, viewport_width, 800);
+        sequence->target_native_x, viewport_width, LegacyCanvas::width);
     const int target_y = MulDiv(
-        sequence->target_native_y, viewport_height, 600);
+        sequence->target_native_y, viewport_height, LegacyCanvas::height);
     x = static_cast<int>(std::lround(
         sequence->source_x +
         (target_x - sequence->source_x) * progress));
@@ -3228,21 +3162,18 @@ void ScalePhotoAlbumSubtree(void* object, int depth = 0) {
     int& y = *reinterpret_cast<int*>(bytes + 0x84);
     int& width = *reinterpret_cast<int*>(bytes + 0x88);
     int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
         width = viewport_width;
         height = viewport_height;
         original(object, viewport_x, viewport_y);
     } else {
-        const int scaled_x = MulDiv(x, viewport_width, 800);
-        const int scaled_y = MulDiv(y, viewport_height, 600);
-        width = MulDiv(width, viewport_width, 800);
-        height = MulDiv(height, viewport_height, 600);
+        const int scaled_x = MulDiv(x, viewport_width, LegacyCanvas::width);
+        const int scaled_y = MulDiv(y, viewport_height, LegacyCanvas::height);
+        width = MulDiv(width, viewport_width, LegacyCanvas::width);
+        height = MulDiv(height, viewport_height, LegacyCanvas::height);
         original(object, scaled_x, scaled_y);
     }
     RememberProcessedLayoutObject(object);
@@ -3411,12 +3342,9 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
         return false;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     const bool native_canvas = width >= 790 && width <= 810 &&
         height >= 590 && height <= 610;
     const bool scaled_canvas = std::abs(width - viewport_width) <= 2 &&
@@ -3446,8 +3374,8 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
         const bool caption =
             (child_width >= 140 && child_width <= 150 &&
              child_height >= 18 && child_height <= 22) ||
-            (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
-             std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2);
+            (std::abs(child_width - MulDiv(145, viewport_width, LegacyCanvas::width)) <= 2 &&
+             std::abs(child_height - MulDiv(20, viewport_height, LegacyCanvas::height)) <= 2);
         if (caption) {
             ++captions;
         }
@@ -3456,8 +3384,8 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
         const bool result_card =
             (child_width >= 95 && child_width <= 105 &&
              child_height >= 115 && child_height <= 125) ||
-            (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
-             std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2);
+            (std::abs(child_width - MulDiv(100, viewport_width, LegacyCanvas::width)) <= 2 &&
+             std::abs(child_height - MulDiv(120, viewport_height, LegacyCanvas::height)) <= 2);
         if (result_card) {
             ++result_cards;
         }
@@ -3477,12 +3405,9 @@ bool IsCachedAnnouncementRootValid() {
         return false;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                              static_cast<int>(g_unified_ui.height));
     const int width = *reinterpret_cast<int*>(bytes + 0x88);
     const int height = *reinterpret_cast<int*>(bytes + 0x8C);
     const bool native_canvas = width >= 790 && width <= 810 &&
@@ -3503,8 +3428,8 @@ bool IsCachedAnnouncementRootValid() {
         const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
         if ((child_width >= 140 && child_width <= 150 &&
              child_height >= 18 && child_height <= 22) ||
-            (std::abs(child_width - MulDiv(145, viewport_width, 800)) <= 2 &&
-             std::abs(child_height - MulDiv(20, viewport_height, 600)) <= 2)) {
+            (std::abs(child_width - MulDiv(145, viewport_width, LegacyCanvas::width)) <= 2 &&
+             std::abs(child_height - MulDiv(20, viewport_height, LegacyCanvas::height)) <= 2)) {
             ++captions;
         }
         // Do not validate the result-card position here. The game moves all
@@ -3512,8 +3437,8 @@ bool IsCachedAnnouncementRootValid() {
         // the one-, two-, three-, and four-artist arrangements.
         if ((child_width >= 95 && child_width <= 105 &&
              child_height >= 115 && child_height <= 125) ||
-            (std::abs(child_width - MulDiv(100, viewport_width, 800)) <= 2 &&
-             std::abs(child_height - MulDiv(120, viewport_height, 600)) <= 2)) {
+            (std::abs(child_width - MulDiv(100, viewport_width, LegacyCanvas::width)) <= 2 &&
+             std::abs(child_height - MulDiv(120, viewport_height, LegacyCanvas::height)) <= 2)) {
             ++result_cards;
         }
         ++count;
@@ -4369,12 +4294,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             LayoutInGameCGRoot(child);
             RememberProcessedLayoutObject(child);
             if (!g_unified_ui.in_game_cg_logged) {
-                int viewport_x = 0;
-                int viewport_y = 0;
-                int viewport_width = 0;
-                int viewport_height = 0;
-                GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                    viewport_x, viewport_y, viewport_width, viewport_height);
+                const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                    AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                          static_cast<int>(g_unified_ui.height));
                 Log("Unified UI in-game CG aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                     child, viewport_x, viewport_y,
                     viewport_width, viewport_height);
@@ -4458,12 +4380,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             ScaleTitleScreenSubtree(child);
             RememberProcessedLayoutObject(child);
             if (!g_unified_ui.title_screen_logged) {
-                int viewport_x = 0;
-                int viewport_y = 0;
-                int viewport_width = 0;
-                int viewport_height = 0;
-                GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                    viewport_x, viewport_y, viewport_width, viewport_height);
+                const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                    AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                          static_cast<int>(g_unified_ui.height));
                 Log("Unified UI title screen aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                     child, viewport_x, viewport_y,
                     viewport_width, viewport_height);
@@ -4477,12 +4396,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleTitleTutorialSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI title tutorial aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4495,12 +4411,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleTitleTutorialQuestionSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI title tutorial question aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4512,12 +4425,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleArtistProfileSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI artist profile aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4529,12 +4439,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleArtistContractSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI artist contract aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4546,12 +4453,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleArtistSigningSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4566,12 +4470,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleAirportSelectionSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI airport selection aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4588,12 +4489,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleStudioEventListSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI studio event list aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4608,12 +4506,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleStudioEventEditorSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI studio event editor aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4629,18 +4524,15 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             ResetTrainingMinigameGeometry(child);
             ScaleTrainingMinigameSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI training minigame aspect-fit self=%p 426x369 -> %d,%d %dx%d",
                 child,
-                viewport_x + MulDiv(187, viewport_width, 800),
-                viewport_y + MulDiv(126, viewport_height, 600),
-                MulDiv(426, viewport_width, 800),
-                MulDiv(369, viewport_height, 600));
+                viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
+                viewport_y + MulDiv(126, viewport_height, LegacyCanvas::height),
+                MulDiv(426, viewport_width, LegacyCanvas::width),
+                MulDiv(369, viewport_height, LegacyCanvas::height));
         } else if (IsTrainingActivityRoot(child)) {
             // Activity pages are fully transformed when first discovered.
             // Rewalking them here would also restart animations owned by
@@ -4660,12 +4552,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberLayoutRoot(child);
             ScaleAnnouncementSubtree(child);
             RememberProcessedLayoutObject(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI announcement aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -4673,12 +4562,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             g_unified_ui.photo_album_root = child;
             RememberLayoutRoot(child);
             ScalePhotoAlbumSubtree(child);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             Log("Unified UI photo album aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
@@ -5179,7 +5065,7 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     auto* bytes = static_cast<unsigned char*>(self);
     void* immediate_call = static_cast<unsigned char*>(_ReturnAddress()) - 5;
     void* world_source_return = nullptr;
-    HMODULE executable = GetModuleHandleW(nullptr);
+    HMODULE executable = g_unified_ui.executable_base;
     if (executable && immediate_call ==
             static_cast<unsigned char*>(static_cast<void*>(executable)) +
                 0xD7125) {
@@ -5260,12 +5146,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         }
     }
     if (self == g_unified_ui.title_screen_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5276,18 +5159,15 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberTitleNativeGeometry(self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
         }
         if (IsTitleStripGeometry(native)) {
             // The original title controller keeps one primary native x and
@@ -5322,23 +5202,20 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             const int native_x = lead_strip ?
                 g_title_strip_motion.primary_native_x :
                 g_title_strip_motion.follower_native_x;
-            x = MulDiv(native_x, viewport_width, 800);
-            y = MulDiv(native->y, viewport_height, 600);
+            x = MulDiv(native_x, viewport_width, LegacyCanvas::width);
+            y = MulDiv(native->y, viewport_height, LegacyCanvas::height);
             original(self, x, y);
             return;
         }
-        x = MulDiv(x, viewport_width, 800);
-        y = MulDiv(y, viewport_height, 600);
+        x = MulDiv(x, viewport_width, LegacyCanvas::width);
+        y = MulDiv(y, viewport_height, LegacyCanvas::height);
         original(self, x, y);
         return;
     }
     if (self == g_title_tutorial_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5349,34 +5226,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_title_tutorial_geometry,
             std::size(g_title_tutorial_geometry),
             g_title_tutorial_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_title_tutorial_question_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5387,34 +5258,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_title_tutorial_question_geometry,
             std::size(g_title_tutorial_question_geometry),
             g_title_tutorial_question_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_artist_profile_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5425,34 +5290,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_artist_profile_geometry,
             std::size(g_artist_profile_geometry),
             g_artist_profile_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_artist_contract_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5463,34 +5322,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_artist_contract_geometry,
             std::size(g_artist_contract_geometry),
             g_artist_contract_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_artist_signing_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5501,34 +5354,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_artist_signing_geometry,
             std::size(g_artist_signing_geometry),
             g_artist_signing_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_airport_selection_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5539,12 +5386,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_airport_selection_geometry,
             std::size(g_airport_selection_geometry),
@@ -5559,23 +5403,20 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 original(self, x, y);
             } else {
                 *reinterpret_cast<int*>(bytes + 0x88) =
-                    MulDiv(native->width, viewport_width, 800);
+                    MulDiv(native->width, viewport_width, LegacyCanvas::width);
                 *reinterpret_cast<int*>(bytes + 0x8C) =
-                    MulDiv(native->height, viewport_height, 600);
+                    MulDiv(native->height, viewport_height, LegacyCanvas::height);
                 original(self,
-                    MulDiv(native->x, viewport_width, 800),
-                    MulDiv(native->y, viewport_height, 600));
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
             }
             return;
         }
     }
     if (self == g_studio_event_list_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5586,34 +5427,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_studio_event_list_geometry,
             std::size(g_studio_event_list_geometry),
             g_studio_event_list_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(x, viewport_width, 800),
-                MulDiv(y, viewport_height, 600));
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_studio_event_editor_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5624,41 +5459,35 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_studio_event_editor_geometry,
             std::size(g_studio_event_editor_geometry),
             g_studio_event_editor_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(x, viewport_width, 800),
-                MulDiv(y, viewport_height, 600));
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_training_minigame_root) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) =
-            MulDiv(426, viewport_width, 800);
+            MulDiv(426, viewport_width, LegacyCanvas::width);
         *reinterpret_cast<int*>(bytes + 0x8C) =
-            MulDiv(369, viewport_height, 600);
+            MulDiv(369, viewport_height, LegacyCanvas::height);
         original(self,
-            viewport_x + MulDiv(187, viewport_width, 800),
-            viewport_y + MulDiv(126, viewport_height, 600));
+            viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
+            viewport_y + MulDiv(126, viewport_height, LegacyCanvas::height));
         return;
     }
     if (parent && IsTrainingMinigameDescendant(self)) {
@@ -5666,21 +5495,18 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_training_minigame_geometry,
             std::size(g_training_minigame_geometry),
             g_training_minigame_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             // Training activities move prompts and judgement markers while
             // they run. Scale the coordinates supplied by this update rather
             // than replaying the first cached position, while retaining the
@@ -5694,18 +5520,15 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             const int native_x = fixed_timer ? native->x : x;
             const int native_y = fixed_timer ? native->y : y;
             original(self,
-                MulDiv(native_x, viewport_width, 800),
-                MulDiv(native_y, viewport_height, 600));
+                MulDiv(native_x, viewport_width, LegacyCanvas::width),
+                MulDiv(native_y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (IsTrainingActivityRoot(self)) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         original(self, viewport_x, viewport_y);
@@ -5716,34 +5539,28 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_training_activity_geometry,
             std::size(g_training_activity_geometry),
             g_training_activity_geometry_count, self);
         if (native) {
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(x, viewport_width, 800),
-                MulDiv(y, viewport_height, 600));
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
     if (self == g_announcement_root && IsCachedAnnouncementRootValid()) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
         *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
         g_scaling_announcement_subtree = true;
@@ -5760,12 +5577,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self, x, y);
             return;
         }
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberGeometry(
             g_announcement_geometry, std::size(g_announcement_geometry),
             g_announcement_geometry_count, self);
@@ -5776,12 +5590,12 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             native->x = x;
             native->y = y;
             *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, 800);
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
             *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, 600);
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
-                MulDiv(native->x, viewport_width, 800),
-                MulDiv(native->y, viewport_height, 600));
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
@@ -5904,25 +5718,19 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         }
         if (parent == g_unified_ui.in_game_cg_root &&
             IsInGameCGVisible()) {
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
             *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-            original(self, MulDiv(x, viewport_width, 800),
-                MulDiv(y, viewport_height, 600));
+            original(self, MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
             return;
         }
         if (self == g_unified_ui.photo_album_root) {
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             original(self, viewport_x, viewport_y);
             return;
         }
@@ -5933,12 +5741,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             }
             const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
             const int current_y = *reinterpret_cast<int*>(bytes + 0x84);
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width, g_unified_ui.height,
-                viewport_x, viewport_y, viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
             TransformPhotoAlbumCarouselFrame(
                 self, immediate_call, current_x, current_y,
                 viewport_width, viewport_height, x, y);
@@ -5955,25 +5760,22 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 original(self, x, y);
                 return;
             }
-            int viewport_x = 0;
-            int viewport_y = 0;
-            int viewport_width = 0;
-            int viewport_height = 0;
-            GetPhotoAlbumViewport(g_unified_ui.width,
-                g_unified_ui.height, viewport_x, viewport_y,
-                viewport_width, viewport_height);
+            const auto [viewport_x, viewport_y, viewport_width,
+                        viewport_height] = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width),
+                static_cast<int>(g_unified_ui.height));
             TitleNativeGeometry* native = RememberGeometry(
                 dropdown_owner->geometry,
                 std::size(dropdown_owner->geometry),
                 dropdown_owner->geometry_count, self);
             if (native) {
                 *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
-                    native->width, viewport_width, 800);
+                    native->width, viewport_width, LegacyCanvas::width);
                 *reinterpret_cast<int*>(bytes + 0x8C) = MulDiv(
-                    native->height, viewport_height, 600);
+                    native->height, viewport_height, LegacyCanvas::height);
                 original(self,
-                    MulDiv(x, viewport_width, 800),
-                    MulDiv(y, viewport_height, 600));
+                    MulDiv(x, viewport_width, LegacyCanvas::width),
+                    MulDiv(y, viewport_height, LegacyCanvas::height));
                 return;
             }
         }
@@ -6071,21 +5873,18 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                     original(self, x, y);
                     return;
                 }
-                int viewport_x = 0;
-                int viewport_y = 0;
-                int viewport_width = 0;
-                int viewport_height = 0;
-                GetPhotoAlbumViewport(g_unified_ui.width,
-                    g_unified_ui.height, viewport_x, viewport_y,
-                    viewport_width, viewport_height);
+                const auto [viewport_x, viewport_y, viewport_width,
+                            viewport_height] = AspectFitLegacyCanvas(
+                    static_cast<int>(g_unified_ui.width),
+                    static_cast<int>(g_unified_ui.height));
                 *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
                     layout->native_width,
-                    viewport_width, 800);
+                    viewport_width, LegacyCanvas::width);
                 *reinterpret_cast<int*>(bytes + 0x8C) = MulDiv(
                     layout->native_height,
-                    viewport_height, 600);
-                x = viewport_x + MulDiv(x, viewport_width, 800);
-                y = viewport_y + MulDiv(y, viewport_height, 600);
+                    viewport_height, LegacyCanvas::height);
+                x = viewport_x + MulDiv(x, viewport_width, LegacyCanvas::width);
+                y = viewport_y + MulDiv(y, viewport_height, LegacyCanvas::height);
                 RememberProcessedLayoutObject(self);
             } else if (IsTitleTutorialProfileDropdown(
                            self, parent, width, height)) {
@@ -6150,6 +5949,7 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
     if (!executable) {
         return false;
     }
+    g_unified_ui.executable_base = executable;
     auto* target = reinterpret_cast<unsigned char*>(executable) + 0x1185A0;
     const unsigned char expected[] = {0x53, 0x8B, 0x5C, 0x24, 0x0C, 0x56};
     if (std::memcmp(target, expected, sizeof(expected)) != 0) {
