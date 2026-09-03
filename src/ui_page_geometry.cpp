@@ -8,6 +8,41 @@
 
 namespace stardom {
 
+PageTextMetrics FitPageTextMetrics(int font_size, int line_gap,
+                                   int viewport_height) {
+    const int font = MulDiv(font_size, viewport_height, 600);
+    // Text labels have an implicit one-pixel inter-line gap (005307C8).
+    return {font, MulDiv(font_size + line_gap + 1, viewport_height, 600) - font - 1};
+}
+
+int CorrectCompanyColumnCenter(int submitted_x, int fitted_width,
+                               int native_width) {
+    return submitted_x + fitted_width / 2 - native_width / 2;
+}
+
+CompanyListMetrics FitCompanyListMetrics(const CompanyListMetrics& native,
+                                        int viewport_width, int viewport_height) {
+    const int font = MulDiv(native.font_size, viewport_height, 600);
+    // Round the complete baseline interval once so every row matches the
+    // separately scaled month-board positions, with no accumulated drift.
+    const int pitch = MulDiv(native.font_size + native.line_gap,
+                             viewport_height, 600);
+    return {MulDiv(native.left, viewport_width, 800),
+            MulDiv(native.top, viewport_height, 600),
+            MulDiv(native.right, viewport_width, 800),
+            MulDiv(native.bottom, viewport_height, 600), font, pitch - font};
+}
+
+bool IsCompanyChartColumn(int x, int y, int width, int height) {
+    return x >= 0 && x <= 374 && y >= 131 && y <= 135 &&
+        width >= 68 && width <= 72 && height >= 235 && height <= 243;
+}
+
+bool IsCompanyTabButton(int x, int y, int width, int height) {
+    return x >= 207 && x <= 545 && y >= 39 && y <= 43 &&
+        width >= 38 && width <= 42 && height >= 38 && height <= 42;
+}
+
 namespace {
 
 struct GeometryLookupCacheEntry {

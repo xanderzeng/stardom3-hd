@@ -628,6 +628,166 @@ bool IsArtistSigningPage(void* object, void* parent,
     return visited >= 20 && action_buttons == 2 && portrait;
 }
 
+bool IsCompanyRevenuePage(void* object, void* parent,
+                          int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // The company revenue report is a direct-root 800x600 page containing a
+    // single 444x535 ledger panel. Distinguish it from the other company
+    // pages that share the same shell by matching the month/year navigation
+    // row and all five report-category buttons owned by that panel.
+    void* panel = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(panel) ||
+        GuiPointer(panel, GuiObjectField::next_sibling) != nullptr ||
+        GuiField<int>(panel, GuiObjectField::x) < 178 ||
+        GuiField<int>(panel, GuiObjectField::x) > 182 ||
+        GuiField<int>(panel, GuiObjectField::y) < 29 ||
+        GuiField<int>(panel, GuiObjectField::y) > 33 ||
+        GuiField<int>(panel, GuiObjectField::width) < 442 ||
+        GuiField<int>(panel, GuiObjectField::width) > 446 ||
+        GuiField<int>(panel, GuiObjectField::height) < 533 ||
+        GuiField<int>(panel, GuiObjectField::height) > 537) {
+        return false;
+    }
+
+    int navigation_buttons = 0;
+    int category_buttons = 0;
+    bool year_label = false;
+    void* child = GuiPointer(panel, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 64) {
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
+        const bool navigation_x =
+            (child_x >= 39 && child_x <= 43 &&
+             child_width >= 78 && child_width <= 82) ||
+            (child_x >= 127 && child_x <= 131 &&
+             child_width >= 38 && child_width <= 42) ||
+            (child_x >= 270 && child_x <= 274 &&
+             child_width >= 38 && child_width <= 42) ||
+            (child_x >= 317 && child_x <= 321 &&
+             child_width >= 78 && child_width <= 82);
+        navigation_buttons += navigation_x &&
+            child_y >= 62 && child_y <= 66 &&
+            child_height >= 28 && child_height <= 32;
+        category_buttons += child_x >= 44 && child_x <= 328 &&
+            child_y >= 97 && child_y <= 101 &&
+            child_width >= 66 && child_width <= 70 &&
+            child_height >= 23 && child_height <= 27;
+        year_label |= child_x >= 170 && child_x <= 174 &&
+            child_y >= 65 && child_y <= 69 &&
+            child_width >= 92 && child_width <= 96 &&
+            child_height >= 18 && child_height <= 22;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return child == nullptr && navigation_buttons == 4 &&
+        category_buttons == 5 && year_label;
+}
+
+bool IsCompanyRevenueChartReady(void* object) {
+    if (!CanReadGuiObject(object)) {
+        return false;
+    }
+    void* panel = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(panel)) {
+        return false;
+    }
+
+    int bars = 0;
+    int populated_bars = 0;
+    void* column = GuiPointer(panel, GuiObjectField::first_child);
+    size_t visited_columns = 0;
+    while (CanReadGuiObject(column) && visited_columns++ < 64) {
+        const int column_x = GuiField<int>(column, GuiObjectField::x);
+        const int column_y = GuiField<int>(column, GuiObjectField::y);
+        const int column_width = GuiField<int>(column, GuiObjectField::width);
+        const bool chart_column = IsCompanyChartColumn(
+            column_x, column_y, column_width,
+            GuiField<int>(column, GuiObjectField::height));
+        if (chart_column) {
+            void* child = GuiPointer(column, GuiObjectField::first_child);
+            size_t visited_children = 0;
+            while (CanReadGuiObject(child) && visited_children++ < 8) {
+                const int child_x = GuiField<int>(child, GuiObjectField::x);
+                const int child_y = GuiField<int>(child, GuiObjectField::y);
+                const int child_width =
+                    GuiField<int>(child, GuiObjectField::width);
+                const int child_height =
+                    GuiField<int>(child, GuiObjectField::height);
+                const bool bar = child_width >= 18 && child_width <= 22 &&
+                    ((child_x >= 12 && child_x <= 16) ||
+                     (child_x >= 33 && child_x <= 37));
+                if (bar) {
+                    ++bars;
+                    populated_bars += child_y > 8 || child_height < 150;
+                }
+                child = GuiPointer(child, GuiObjectField::next_sibling);
+            }
+        }
+        column = GuiPointer(column, GuiObjectField::next_sibling);
+    }
+    // All ten bars are initially created as nearly full-height placeholders.
+    // Let the report controller populate at least one real value before the
+    // subtree changes coordinate systems.
+    return bars == 10 && populated_bars > 0;
+}
+
+bool IsCompanySectionPage(void* object, void* parent,
+                          int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+    void* panel = GuiPointer(object, GuiObjectField::first_child);
+    return CanReadGuiObject(panel) &&
+        GuiPointer(panel, GuiObjectField::next_sibling) == nullptr &&
+        GuiField<int>(panel, GuiObjectField::x) >= 178 &&
+        GuiField<int>(panel, GuiObjectField::x) <= 182 &&
+        GuiField<int>(panel, GuiObjectField::y) >= 29 &&
+        GuiField<int>(panel, GuiObjectField::y) <= 33 &&
+        GuiField<int>(panel, GuiObjectField::width) >= 442 &&
+        GuiField<int>(panel, GuiObjectField::width) <= 446 &&
+        GuiField<int>(panel, GuiObjectField::height) >= 533 &&
+        GuiField<int>(panel, GuiObjectField::height) <= 537;
+}
+
+bool IsCompanyNavigationOverlay(void* object, void* parent,
+                                int width, int height) {
+    if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
+        width < 798 || width > 802 || height < 598 || height > 602) {
+        return false;
+    }
+
+    // The five company-section buttons and shared exit button live in a
+    // separate direct-root overlay, not in any individual company page.
+    int section_buttons = 0;
+    bool exit_button = false;
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < 16) {
+        const int child_x = GuiField<int>(child, GuiObjectField::x);
+        const int child_y = GuiField<int>(child, GuiObjectField::y);
+        const int child_width = GuiField<int>(child, GuiObjectField::width);
+        const int child_height = GuiField<int>(child, GuiObjectField::height);
+        // Tabs slide between slots when the selected section changes. The
+        // six-control shape identifies this overlay, not one tab's rest pose.
+        section_buttons += IsCompanyTabButton(
+            child_x, child_y, child_width, child_height);
+        exit_button |= child_x >= 496 && child_x <= 500 &&
+            child_y >= 524 && child_y <= 528 &&
+            child_width >= 90 && child_width <= 94 &&
+            child_height >= 30 && child_height <= 34;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return child == nullptr && visited == 6 &&
+        section_buttons == 5 && exit_button;
+}
+
 bool IsAirportSelectionPage(void* object, void* parent,
                             int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -1825,6 +1985,20 @@ void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
 size_t g_artist_signing_geometry_count = 0;
 void* g_artist_signing_root = nullptr;
+TitleNativeGeometry g_company_revenue_geometry[512]{};
+size_t g_company_revenue_geometry_count = 0;
+void* g_company_revenue_root = nullptr;
+bool g_company_revenue_waiting_for_bars = false;
+TitleNativeGeometry g_company_navigation_geometry[32]{};
+size_t g_company_navigation_geometry_count = 0;
+void* g_company_navigation_root = nullptr;
+struct CompanySectionLayout {
+    void* root = nullptr;
+    TitleNativeGeometry geometry[1024]{};
+    size_t geometry_count = 0;
+};
+CompanySectionLayout g_company_section_layouts[8]{};
+size_t g_company_section_layout_count = 0;
 TitleNativeGeometry g_airport_selection_geometry[128]{};
 size_t g_airport_selection_geometry_count = 0;
 void* g_airport_selection_root = nullptr;
@@ -1875,6 +2049,54 @@ struct ArtistRadarVertexCache {
 ArtistRadarVertexCache g_artist_radar_vertices;
 
 bool IsCachedAnnouncementRootValid();
+
+template <size_t GeometryCapacity, typename ResetGeometry>
+void ScaleAspectFitSubtree(
+        void* object, int depth,
+        TitleNativeGeometry (&geometry)[GeometryCapacity],
+        size_t& geometry_count, ResetGeometry reset_geometry,
+        int maximum_depth, size_t maximum_children) {
+    if (!CanReadGuiObject(object) || depth > maximum_depth ||
+        !g_unified_ui.trampoline) {
+        return;
+    }
+
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    int& width = GuiField<int>(object, GuiObjectField::width);
+    int& height = GuiField<int>(object, GuiObjectField::height);
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    if (depth == 0) {
+        reset_geometry(object);
+        width = viewport.width;
+        height = viewport.height;
+        original(object, viewport.x, viewport.y);
+    } else {
+        TitleNativeGeometry* native = RememberGeometry(
+            geometry, GeometryCapacity, geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport.width,
+                           LegacyCanvas::width);
+            height = MulDiv(native->height, viewport.height,
+                            LegacyCanvas::height);
+            original(object,
+                MulDiv(native->x, viewport.width, LegacyCanvas::width),
+                MulDiv(native->y, viewport.height, LegacyCanvas::height));
+        }
+    }
+    RememberProcessedLayoutObject(object);
+
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    size_t visited = 0;
+    while (CanReadGuiObject(child) && visited++ < maximum_children) {
+        void* next = GuiPointer(child, GuiObjectField::next_sibling);
+        ScaleAspectFitSubtree(
+            child, depth + 1, geometry, geometry_count, reset_geometry,
+            maximum_depth, maximum_children);
+        child = next;
+    }
+}
 
 void ResetEndGameSummaryGeometry(void* root) {
     if (g_end_game_summary_root == root) {
@@ -2100,44 +2322,9 @@ void CorrectArtistRadarVertices() {
 }
 
 void ScaleArtistProfileSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetArtistProfileGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_artist_profile_geometry,
-            std::size(g_artist_profile_geometry),
-            g_artist_profile_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 512) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleArtistProfileSubtree(child, depth + 1);
-        child = next;
-    }
+    ScaleAspectFitSubtree(
+        object, depth, g_artist_profile_geometry,
+        g_artist_profile_geometry_count, ResetArtistProfileGeometry, 8, 512);
 }
 
 void ResetArtistContractGeometry(void* root) {
@@ -2153,44 +2340,9 @@ bool IsArtistContractDescendant(void* object) {
 }
 
 void ScaleArtistContractSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetArtistContractGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_artist_contract_geometry,
-            std::size(g_artist_contract_geometry),
-            g_artist_contract_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 64) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleArtistContractSubtree(child, depth + 1);
-        child = next;
-    }
+    ScaleAspectFitSubtree(
+        object, depth, g_artist_contract_geometry,
+        g_artist_contract_geometry_count, ResetArtistContractGeometry, 8, 64);
 }
 
 void ResetArtistSigningGeometry(void* root) {
@@ -2206,43 +2358,475 @@ bool IsArtistSigningDescendant(void* object) {
 }
 
 void ScaleArtistSigningSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
+    ScaleAspectFitSubtree(
+        object, depth, g_artist_signing_geometry,
+        g_artist_signing_geometry_count, ResetArtistSigningGeometry, 8, 128);
+}
+
+void ResetCompanyRevenueGeometry(void* root) {
+    if (g_company_revenue_root == root) {
+        return;
+    }
+    g_company_revenue_root = root;
+    g_company_revenue_geometry_count = 0;
+}
+
+bool IsCompanyRevenueDescendant(void* object) {
+    return IsDescendantOf(object, g_company_revenue_root, 8);
+}
+
+void ScaleCompanyRevenueSubtree(void* object, int depth = 0) {
+    ScaleAspectFitSubtree(
+        object, depth, g_company_revenue_geometry,
+        g_company_revenue_geometry_count, ResetCompanyRevenueGeometry,
+        8, 512);
+}
+
+bool IsCompanyRevenueActive() {
+    return CanReadGuiObject(g_company_revenue_root) &&
+        GuiField<unsigned char>(g_company_revenue_root,
+                                GuiObjectField::visible) != 0;
+}
+
+bool IsCompanyRevenueScreenVisible() {
+    if (CanReadGuiObject(g_company_navigation_root) &&
+        GuiField<unsigned char>(g_company_navigation_root,
+                                GuiObjectField::visible) != 0) {
+        return true;
+    }
+    if (IsCompanyRevenueActive()) {
+        return true;
+    }
+    for (size_t i = 0; i < g_company_section_layout_count; ++i) {
+        void* root = g_company_section_layouts[i].root;
+        if (CanReadGuiObject(root) &&
+            GuiField<unsigned char>(root, GuiObjectField::visible) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsCompanyRevenueChartColumnGeometry(
+        const TitleNativeGeometry* native) {
+    if (!native) {
+        return false;
+    }
+    // The report controller centres 1..5 artist columns dynamically.
+    return IsCompanyChartColumn(native->x, native->y,
+                                native->width, native->height);
+}
+
+bool IsCompanyRevenueBarGeometry(
+        void* object, const TitleNativeGeometry* native) {
+    if (!native || native->width < 18 || native->width > 22 ||
+        !((native->x >= 12 && native->x <= 16) ||
+          (native->x >= 33 && native->x <= 37))) {
+        return false;
+    }
+    void* parent = GuiPointer(object, GuiObjectField::parent);
+    return IsCompanyRevenueChartColumnGeometry(FindGeometry(
+        g_company_revenue_geometry, g_company_revenue_geometry_count,
+        parent));
+}
+
+bool IsCompanyRevenueChartMemberGeometry(
+        void* object, const TitleNativeGeometry* native) {
+    if (!native) {
+        return false;
+    }
+    if (IsCompanyRevenueChartColumnGeometry(native)) {
+        return true;
+    }
+    return IsCompanyRevenueChartColumnGeometry(FindGeometry(
+        g_company_revenue_geometry, g_company_revenue_geometry_count,
+        GuiPointer(object, GuiObjectField::parent)));
+}
+
+void RestoreCompanyRevenueChartToNative() {
+    if (!g_unified_ui.trampoline) {
         return;
     }
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetArtistSigningGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_artist_signing_geometry,
-            std::size(g_artist_signing_geometry),
-            g_artist_signing_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
+    for (size_t i = 0; i < g_company_revenue_geometry_count; ++i) {
+        TitleNativeGeometry& native = g_company_revenue_geometry[i];
+        if (!CanReadGuiObject(native.object)) {
+            continue;
+        }
+        if (!IsCompanyRevenueChartMemberGeometry(
+                native.object, &native)) {
+            continue;
+        }
+        GuiField<int>(native.object, GuiObjectField::width) = native.width;
+        GuiField<int>(native.object, GuiObjectField::height) = native.height;
+        original(native.object, native.x, native.y);
+    }
+    g_company_revenue_waiting_for_bars = true;
+}
+
+bool AreCompanyRevenueBarsReady() {
+    int native_bars = 0;
+    int populated_bars = 0;
+    for (size_t i = 0; i < g_company_revenue_geometry_count; ++i) {
+        TitleNativeGeometry& native = g_company_revenue_geometry[i];
+        if (!CanReadGuiObject(native.object) ||
+            !IsCompanyRevenueBarGeometry(native.object, &native)) {
+            continue;
+        }
+        const int x = GuiField<int>(native.object, GuiObjectField::x);
+        const int y = GuiField<int>(native.object, GuiObjectField::y);
+        const int width = GuiField<int>(native.object, GuiObjectField::width);
+        const int height = GuiField<int>(native.object, GuiObjectField::height);
+        const bool native_bar = width >= 18 && width <= 22 &&
+            ((x >= 12 && x <= 16) || (x >= 33 && x <= 37)) &&
+            y >= 0 && y <= 163 && height >= 1 && height <= 164;
+        if (native_bar) {
+            ++native_bars;
+            populated_bars += y > 8 || height < 150;
         }
     }
-    RememberProcessedLayoutObject(object);
+    return native_bars == 10 && populated_bars > 0;
+}
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 128) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleArtistSigningSubtree(child, depth + 1);
-        child = next;
+void RefreshCompanyRevenueBars() {
+    if (!IsCompanyRevenueActive() || !g_unified_ui.trampoline) {
+        return;
+    }
+    if (g_company_revenue_waiting_for_bars) {
+        if (!AreCompanyRevenueBarsReady()) {
+            return;
+        }
+        for (size_t i = 0; i < g_company_revenue_geometry_count; ++i) {
+            TitleNativeGeometry& native = g_company_revenue_geometry[i];
+            if (!CanReadGuiObject(native.object) ||
+                !IsCompanyRevenueChartMemberGeometry(native.object, &native)) {
+                continue;
+            }
+            native.x = GuiField<int>(native.object, GuiObjectField::x);
+            native.y = GuiField<int>(native.object, GuiObjectField::y);
+            native.width = GuiField<int>(native.object, GuiObjectField::width);
+            native.height = GuiField<int>(native.object, GuiObjectField::height);
+        }
+        g_company_revenue_waiting_for_bars = false;
+        ScaleCompanyRevenueSubtree(g_company_revenue_root);
+        return;
+    }
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width),
+        static_cast<int>(g_unified_ui.height));
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    for (size_t i = 0; i < g_company_revenue_geometry_count; ++i) {
+        TitleNativeGeometry& native = g_company_revenue_geometry[i];
+        if (!CanReadGuiObject(native.object) ||
+            !IsCompanyRevenueBarGeometry(native.object, &native)) {
+            continue;
+        }
+        const int current_x =
+            GuiField<int>(native.object, GuiObjectField::x);
+        const int current_y =
+            GuiField<int>(native.object, GuiObjectField::y);
+        const int current_width =
+            GuiField<int>(native.object, GuiObjectField::width);
+        const int current_height =
+            GuiField<int>(native.object, GuiObjectField::height);
+        const bool native_bar = current_width >= 18 && current_width <= 22 &&
+            ((current_x >= 12 && current_x <= 16) ||
+             (current_x >= 33 && current_x <= 37)) &&
+            current_y >= 0 && current_y <= 163 &&
+            current_height >= 1 && current_height <= 164;
+        if (!native_bar) {
+            continue;
+        }
+        GuiField<int>(native.object, GuiObjectField::width) =
+            MulDiv(current_width, viewport.width, LegacyCanvas::width);
+        GuiField<int>(native.object, GuiObjectField::height) =
+            MulDiv(current_height, viewport.height, LegacyCanvas::height);
+        original(native.object,
+            MulDiv(current_x, viewport.width, LegacyCanvas::width),
+            MulDiv(current_y, viewport.height, LegacyCanvas::height));
+        RememberProcessedLayoutObject(native.object);
+    }
+}
+
+void ResetCompanyNavigationGeometry(void* root) {
+    if (g_company_navigation_root == root) {
+        return;
+    }
+    g_company_navigation_root = root;
+    g_company_navigation_geometry_count = 0;
+}
+
+bool IsCompanyNavigationDescendant(void* object) {
+    return IsDescendantOf(object, g_company_navigation_root, 4);
+}
+
+void ScaleCompanyNavigationSubtree(void* object, int depth = 0) {
+    ScaleAspectFitSubtree(
+        object, depth, g_company_navigation_geometry,
+        g_company_navigation_geometry_count, ResetCompanyNavigationGeometry,
+        4, 32);
+}
+
+bool DiscoverCompanyNavigation(void* candidate) {
+    if (g_company_navigation_root || !CanReadGuiObject(candidate) ||
+        !IsCompanyNavigationOverlay(candidate,
+            GuiPointer(candidate, GuiObjectField::parent),
+            GuiField<int>(candidate, GuiObjectField::width),
+            GuiField<int>(candidate, GuiObjectField::height))) {
+        return false;
+    }
+    ResetCompanyNavigationGeometry(candidate);
+    RememberLayoutRoot(candidate);
+    ScaleCompanyNavigationSubtree(candidate);
+    return true;
+}
+
+void DiscoverVisibleCompanyNavigation() {
+    if (g_company_navigation_root || !IsCompanyRevenueScreenVisible()) {
+        return;
+    }
+    // Functional first-frame discovery, independent of the 30-second full
+    // layout maintenance pass. Only direct roots can own this overlay.
+    void* child = GuiPointer(g_unified_ui.primary_root,
+                             GuiObjectField::first_child);
+    for (size_t visited = 0; CanReadGuiObject(child) && visited < 512;
+         ++visited) {
+        if (DiscoverCompanyNavigation(child)) {
+            return;
+        }
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+}
+
+using GuiAnimateMoveFn = void(__thiscall*)(void*, int, int, float);
+GuiAnimateMoveFn g_company_animate_move = nullptr;
+
+void __fastcall HookCompanyAnimateMove(void* self, void*, int x, int y,
+                                       float duration) {
+    GuiObjectReadBatch read_batch;
+    if (CanReadGuiObject(self)) {
+        DiscoverCompanyNavigation(GuiPointer(self, GuiObjectField::parent));
+        if (TitleNativeGeometry* native = FindGeometry(
+                g_company_navigation_geometry,
+                g_company_navigation_geometry_count, self)) {
+            // 005187A0 snapshots +80/+84 into its interpolation start.
+            // Keep BOTH endpoints native; HookGuiMove fits each result once.
+            const int fitted_x = GuiField<int>(self, GuiObjectField::x);
+            const int fitted_y = GuiField<int>(self, GuiObjectField::y);
+            GuiField<int>(self, GuiObjectField::x) = native->x;
+            GuiField<int>(self, GuiObjectField::y) = native->y;
+            g_company_animate_move(self, x, y, duration);
+            GuiField<int>(self, GuiObjectField::x) = fitted_x;
+            GuiField<int>(self, GuiObjectField::y) = fitted_y;
+            return;
+        }
+    }
+    g_company_animate_move(self, x, y, duration);
+}
+
+TitleNativeGeometry* RememberDynamicCompanySectionGeometry(
+        CompanySectionLayout& layout, void* object, int x, int y,
+        int viewport_width, int viewport_height) {
+    if (TitleNativeGeometry* existing = FindGeometry(
+            layout.geometry, layout.geometry_count, object)) {
+        return existing;
+    }
+    if (!CanReadGuiObject(object) ||
+        layout.geometry_count >= std::size(layout.geometry)) {
+        return nullptr;
+    }
+
+    // Company list controllers clone controls from the already fitted page
+    // template. Their current width/height are therefore scaled, while the
+    // GuiMove coordinates are still authored in the native 800x600 space.
+    // Cache a reconstructed native rectangle so the clone is not enlarged a
+    // second time (most visibly, the artist-achievement month boards).
+    TitleNativeGeometry& native =
+        layout.geometry[layout.geometry_count++];
+    native.object = object;
+    native.x = x;
+    native.y = y;
+    const int current_width =
+        GuiField<int>(object, GuiObjectField::width);
+    const int current_height =
+        GuiField<int>(object, GuiObjectField::height);
+    native.width = current_width;
+    native.height = current_height;
+    for (size_t i = 0; i + 1 < layout.geometry_count; ++i) {
+        const TitleNativeGeometry& template_geometry = layout.geometry[i];
+        const int fitted_width = MulDiv(
+            template_geometry.width, viewport_width, LegacyCanvas::width);
+        const int fitted_height = MulDiv(
+            template_geometry.height, viewport_height, LegacyCanvas::height);
+        if (std::abs(current_width - fitted_width) <= 1 &&
+            std::abs(current_height - fitted_height) <= 1) {
+            native.width = template_geometry.width;
+            native.height = template_geometry.height;
+            break;
+        }
+    }
+    return &native;
+}
+
+CompanySectionLayout* FindCompanySectionLayout(void* root) {
+    for (size_t i = 0; i < g_company_section_layout_count; ++i) {
+        if (g_company_section_layouts[i].root == root) {
+            return &g_company_section_layouts[i];
+        }
+    }
+    return nullptr;
+}
+
+CompanySectionLayout* RegisterCompanySectionLayout(void* root) {
+    if (CompanySectionLayout* existing = FindCompanySectionLayout(root)) {
+        return existing;
+    }
+    if (g_company_section_layout_count >=
+        std::size(g_company_section_layouts)) {
+        return nullptr;
+    }
+    CompanySectionLayout& layout =
+        g_company_section_layouts[g_company_section_layout_count++];
+    layout = {};
+    layout.root = root;
+    return &layout;
+}
+
+CompanySectionLayout* FindCompanySectionLayoutForObject(void* object) {
+    for (size_t i = 0; i < g_company_section_layout_count; ++i) {
+        CompanySectionLayout& layout = g_company_section_layouts[i];
+        if (IsDescendantOf(object, layout.root, 8)) {
+            return &layout;
+        }
+    }
+    return nullptr;
+}
+
+void ScaleCompanySectionSubtree(
+        CompanySectionLayout& layout, void* object, int depth = 0) {
+    const auto reset = [&layout](void* root) {
+        if (layout.root != root) {
+            layout.root = root;
+            layout.geometry_count = 0;
+        }
+    };
+    ScaleAspectFitSubtree(
+        object, depth, layout.geometry, layout.geometry_count, reset,
+        8, 1024);
+}
+
+using CompanyListDrawFn = void(__thiscall*)(void*, void*, uint32_t, uint32_t);
+CompanyListDrawFn g_company_list_draw = nullptr;
+
+bool IsAspectFittedTextObject(void* object) {
+    // Follow only the current object's ownership chain. No global GUI scan,
+    // no stale per-object font cache, and dynamic/cloned labels work too.
+    const void* roots[] = {
+        g_title_native_root, g_title_tutorial_root, g_title_tutorial_bubble,
+        g_title_tutorial_question_root, g_announcement_root,
+        g_artist_profile_root, g_artist_contract_root, g_artist_signing_root,
+        g_company_revenue_root, g_company_navigation_root,
+        g_airport_selection_root, g_studio_event_list_root,
+        g_studio_event_editor_root, g_training_minigame_root,
+        g_end_game_summary_root, g_unified_ui.photo_album_root};
+    for (int depth = 0; CanReadGuiObject(object) && depth <= 10; ++depth) {
+        for (const void* root : roots) {
+            if (object == root) {
+                return true;
+            }
+        }
+        for (size_t i = 0; i < g_company_section_layout_count; ++i) {
+            if (object == g_company_section_layouts[i].root) {
+                return true;
+            }
+        }
+        for (size_t i = 0; i < g_studio_event_dropdown_count; ++i) {
+            if (object == g_studio_event_dropdowns[i].root) {
+                return true;
+            }
+        }
+        for (size_t i = 0; i < g_training_activity_root_count; ++i) {
+            if (object == g_training_activity_roots[i]) {
+                return true;
+            }
+        }
+        object = GuiPointer(object, GuiObjectField::parent);
+    }
+    return false;
+}
+
+CompanyListDrawFn g_fitted_text_draw = nullptr;
+using TextMeasureFn = void(__thiscall*)(void*);
+TextMeasureFn g_fitted_text_measure = nullptr;
+
+void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
+                                  uint32_t time, uint32_t flags) {
+    GuiObjectReadBatch read_batch;
+    if (!g_fitted_text_measure || !IsAspectFittedTextObject(self) ||
+        !CanReadGuiObject(static_cast<unsigned char*>(self) + 0x60)) {
+        g_fitted_text_draw(self, renderer, time, flags);
+        return;
+    }
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+    const int font = GuiField<int>(self, 0x130);
+    if (viewport.height <= LegacyCanvas::height || font < 2 || font > 128) {
+        g_fitted_text_draw(self, renderer, time, flags);
+        return;
+    }
+    // These are render metrics, not the backing string, character limits,
+    // animation state or logical geometry. Never persist a scaled font into
+    // the control: game layout and cloning must keep seeing native values.
+    constexpr size_t fields[] = {0x130, 0x140, 0x150, 0x154, 0x158};
+    int saved[std::size(fields)];
+    for (size_t i = 0; i < std::size(fields); ++i) {
+        saved[i] = GuiField<int>(self, fields[i]);
+    }
+    const unsigned char auto_size = GuiField<unsigned char>(self, 0x134);
+    const auto fitted = FitPageTextMetrics(font, saved[1], viewport.height);
+    GuiField<int>(self, 0x130) = fitted.font_size;
+    GuiField<int>(self, 0x140) = fitted.line_gap;
+    // Use the game's own measurement with the fitted bounds/font so centred,
+    // right-aligned and multiline strings share the renderer's wrap rules.
+    // Disable auto-resize during this render-only measurement.
+    GuiField<unsigned char>(self, 0x134) = 0;
+    g_fitted_text_measure(self);
+    g_fitted_text_draw(self, renderer, time, flags);
+    GuiField<unsigned char>(self, 0x134) = auto_size;
+    for (size_t i = 0; i < std::size(fields); ++i) {
+        GuiField<int>(self, fields[i]) = saved[i];
+    }
+}
+
+void __fastcall HookCompanyListDraw(void* self, void*, void* renderer,
+                                    uint32_t time, uint32_t flags) {
+    GuiObjectReadBatch read_batch;
+    if (!IsAspectFittedTextObject(self) ||
+        !CanReadGuiObject(static_cast<unsigned char*>(self) + 0x50)) {
+        g_company_list_draw(self, renderer, time, flags);
+        return;
+    }
+    // 00533700 draws the list's text directly, without GuiMove children.
+    // Keep logical wrapping/scrolling/month indices native; fit these six
+    // render metrics only for the duration of the draw and then restore them.
+    constexpr size_t fields[] = {0x11C, 0x120, 0x124, 0x128, 0x13C, 0x144};
+    const CompanyListMetrics native = {
+        GuiField<int>(self, fields[0]), GuiField<int>(self, fields[1]),
+        GuiField<int>(self, fields[2]), GuiField<int>(self, fields[3]),
+        GuiField<int>(self, fields[4]), GuiField<int>(self, fields[5])};
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+    const auto fitted = FitCompanyListMetrics(native, viewport.width, viewport.height);
+    const int before[] = {native.left, native.top, native.right, native.bottom,
+                          native.font_size, native.line_gap};
+    const int after[] = {fitted.left, fitted.top, fitted.right, fitted.bottom,
+                         fitted.font_size, fitted.line_gap};
+    for (size_t i = 0; i < std::size(fields); ++i) {
+        GuiField<int>(self, fields[i]) = after[i];
+    }
+    g_company_list_draw(self, renderer, time, flags);
+    for (size_t i = 0; i < std::size(fields); ++i) {
+        GuiField<int>(self, fields[i]) = before[i];
     }
 }
 
@@ -2324,44 +2908,10 @@ bool IsStudioEventListDescendant(void* object) {
 }
 
 void ScaleStudioEventListSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetStudioEventListGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_studio_event_list_geometry,
-            std::size(g_studio_event_list_geometry),
-            g_studio_event_list_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 2048) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleStudioEventListSubtree(child, depth + 1);
-        child = next;
-    }
+    ScaleAspectFitSubtree(
+        object, depth, g_studio_event_list_geometry,
+        g_studio_event_list_geometry_count, ResetStudioEventListGeometry,
+        8, 2048);
 }
 
 void ResetStudioEventEditorGeometry(void* root) {
@@ -2377,44 +2927,10 @@ bool IsStudioEventEditorDescendant(void* object) {
 }
 
 void ScaleStudioEventEditorSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetStudioEventEditorGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_studio_event_editor_geometry,
-            std::size(g_studio_event_editor_geometry),
-            g_studio_event_editor_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 4096) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleStudioEventEditorSubtree(child, depth + 1);
-        child = next;
-    }
+    ScaleAspectFitSubtree(
+        object, depth, g_studio_event_editor_geometry,
+        g_studio_event_editor_geometry_count, ResetStudioEventEditorGeometry,
+        8, 4096);
 }
 
 StudioEventDropdownLayout* FindStudioEventDropdownLayout(void* root) {
@@ -2758,44 +3274,9 @@ bool IsTitleTutorialDescendant(void* object) {
 }
 
 void ScaleTitleTutorialSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetTitleTutorialGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_title_tutorial_geometry,
-            std::size(g_title_tutorial_geometry),
-            g_title_tutorial_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 128) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleTitleTutorialSubtree(child, depth + 1);
-        child = next;
-    }
+    ScaleAspectFitSubtree(
+        object, depth, g_title_tutorial_geometry,
+        g_title_tutorial_geometry_count, ResetTitleTutorialGeometry, 8, 128);
 }
 
 void ResetTitleTutorialBubbleGeometry(void* bubble) {
@@ -2855,44 +3336,10 @@ bool IsTitleTutorialQuestionDescendant(void* object) {
 }
 
 void ScaleTitleTutorialQuestionSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 4 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetTitleTutorialQuestionGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_title_tutorial_question_geometry,
-            std::size(g_title_tutorial_question_geometry),
-            g_title_tutorial_question_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 16) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleTitleTutorialQuestionSubtree(child, depth + 1);
-        child = next;
-    }
+    ScaleAspectFitSubtree(
+        object, depth, g_title_tutorial_question_geometry,
+        g_title_tutorial_question_geometry_count,
+        ResetTitleTutorialQuestionGeometry, 4, 16);
 }
 
 void ResetAnnouncementGeometry(void* root) {
@@ -4459,6 +4906,50 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             Log("Unified UI artist signing aspect-fit self=%p 800x600 -> %d,%d %dx%d",
                 child, viewport_x, viewport_y,
                 viewport_width, viewport_height);
+        } else if (child == g_company_navigation_root) {
+            // The controller moves the selected section icon into the title
+            // slot. Do not replay the discovery snapshot during maintenance.
+            RememberProcessedLayoutObject(child);
+        } else if (IsCompanyNavigationOverlay(child, root, width, height)) {
+            ResetCompanyNavigationGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleCompanyNavigationSubtree(child);
+            RememberProcessedLayoutObject(child);
+        } else if (child == g_company_revenue_root) {
+            // Revenue bars are controller-sized after the report is loaded.
+            // Do not replay the resource template during maintenance or their
+            // live heights would be replaced with the cached startup values.
+            RememberProcessedLayoutObject(child);
+        } else if (IsCompanyRevenuePage(child, root, width, height)) {
+            const bool chart_ready = IsCompanyRevenueChartReady(child);
+            ResetCompanyRevenueGeometry(child);
+            RememberLayoutRoot(child);
+            ScaleCompanyRevenueSubtree(child);
+            // Scale the page immediately. The controller has not populated
+            // these ten placeholder bars yet, so leave just those leaves in
+            // native coordinates until their first real values arrive.
+            if (!chart_ready) {
+                RestoreCompanyRevenueChartToNative();
+            }
+            RememberProcessedLayoutObject(child);
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
+            Log("Unified UI company revenue aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+        } else if (CompanySectionLayout* company_section =
+                       FindCompanySectionLayout(child)) {
+            // Controllers own live content on these cached pages. They are
+            // already fitted; HookGuiMove transforms later mutations.
+            RememberProcessedLayoutObject(company_section->root);
+        } else if (IsCompanySectionPage(child, root, width, height)) {
+            if (CompanySectionLayout* company_section =
+                    RegisterCompanySectionLayout(child)) {
+                RememberLayoutRoot(child);
+                ScaleCompanySectionSubtree(*company_section, child);
+                RememberProcessedLayoutObject(child);
+            }
         } else if (child == g_airport_selection_root) {
             // The airport controller animates PlaneAirplane along the route.
             // Initial discovery fits the complete resource tree; replaying
@@ -4868,6 +5359,8 @@ void RefreshUnifiedUILayout() {
     RefreshPhoneOverlayDialoguePanels("begin-scene");
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
+    DiscoverVisibleCompanyNavigation();
+    RefreshCompanyRevenueBars();
     // Closing an already discovered announcement is a direct visibility-byte
     // change and may not produce GuiMove activity. Retire the active render
     // path immediately using the retained root instead of waiting for the
@@ -5076,6 +5569,10 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         world_source_return = return_slot[3];
     }
     void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
+    if (!g_company_navigation_root) {
+        // Construction/show callbacks can arrive before the next BeginScene.
+        DiscoverCompanyNavigation(parent);
+    }
     if (self == g_phone_overlay_button &&
         parent == g_phone_overlay_root && IsPhoneOverlayRinging()) {
         const int width = *reinterpret_cast<int*>(bytes + 0x88);
@@ -5369,6 +5866,164 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             original(self,
                 MulDiv(native->x, viewport_width, LegacyCanvas::width),
                 MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            return;
+        }
+    }
+    if (self == g_company_navigation_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsCompanyNavigationDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_company_navigation_geometry,
+            std::size(g_company_navigation_geometry),
+            g_company_navigation_geometry_count, self);
+        if (native) {
+            // Retain the live native interpolation result, not the resource's
+            // initial slot. The next animation must start at this position.
+            native->x = x;
+            native->y = y;
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            original(self,
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
+            return;
+        }
+    }
+    if (CompanySectionLayout* company_section =
+            FindCompanySectionLayout(self)) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent) {
+        if (CompanySectionLayout* company_section =
+                FindCompanySectionLayoutForObject(self)) {
+            if (IsRepeatedObjectPosition(self, x, y)) {
+                original(self, x, y);
+                return;
+            }
+            const auto [viewport_x, viewport_y,
+                        viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
+            TitleNativeGeometry* native =
+                RememberDynamicCompanySectionGeometry(
+                    *company_section, self, x, y,
+                    viewport_width, viewport_height);
+            if (native) {
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width,
+                           LegacyCanvas::width);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native->height, viewport_height,
+                           LegacyCanvas::height);
+                original(self,
+                    MulDiv(x, viewport_width, LegacyCanvas::width),
+                    MulDiv(y, viewport_height, LegacyCanvas::height));
+                return;
+            }
+        }
+    }
+    if (self == g_company_revenue_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return;
+    }
+    if (parent && IsCompanyRevenueDescendant(self)) {
+        const auto* executable_bytes = reinterpret_cast<unsigned char*>(executable);
+        const bool bar_update = executable &&
+            (immediate_call == executable_bytes + 0x84D3C ||
+             immediate_call == executable_bytes + 0x84E0D);
+        TitleNativeGeometry* cached = FindGeometry(
+            g_company_revenue_geometry,
+            g_company_revenue_geometry_count, self);
+        if (!g_company_revenue_waiting_for_bars && cached && executable &&
+            immediate_call == executable_bytes + 0x84AB7 &&
+            IsCompanyRevenueChartColumnGeometry(cached)) {
+            // 00484A9F reads the first column's fitted width, although its
+            // spacing and origin remain native. Undo only that half-width.
+            const RectI viewport = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width),
+                static_cast<int>(g_unified_ui.height));
+            x = CorrectCompanyColumnCenter(x,
+                MulDiv(cached->width, viewport.width, LegacyCanvas::width),
+                cached->width);
+        }
+        if (g_company_revenue_waiting_for_bars && cached &&
+            IsCompanyRevenueChartMemberGeometry(self, cached)) {
+            // The report controller must see and update the chart in its
+            // authored coordinate system before the fitted geometry is
+            // committed. Passing these moves through lets it replace the
+            // ten full-height resource placeholders with real values.
+            original(self, x, y);
+            return;
+        }
+        if (!bar_update && IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = cached ? cached : RememberGeometry(
+            g_company_revenue_geometry,
+            std::size(g_company_revenue_geometry),
+            g_company_revenue_geometry_count, self);
+        if (native) {
+            const bool live_bar = bar_update &&
+                IsCompanyRevenueBarGeometry(self, native) &&
+                ((x >= 12 && x <= 16) || (x >= 33 && x <= 37)) &&
+                y >= 0 && y <= 163;
+            if (live_bar) {
+                // 00484D15 resizes the bar before 00484D3C moves it.
+                // Retain that live height, including the one-pixel zero bar.
+                const int native_height =
+                    GuiField<int>(self, GuiObjectField::height);
+                native->x = x;
+                native->y = y;
+                native->height = native_height;
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width,
+                           LegacyCanvas::width);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native_height, viewport_height,
+                           LegacyCanvas::height);
+                original(self,
+                    MulDiv(x, viewport_width, LegacyCanvas::width),
+                    MulDiv(y, viewport_height, LegacyCanvas::height));
+                return;
+            }
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            original(self,
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
             return;
         }
     }
@@ -5939,6 +6594,131 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     original(self, x, y);
 }
 
+bool InstallCompanyAnimationHook(HMODULE executable) {
+    if (g_company_animate_move) {
+        return true;
+    }
+    auto* target = reinterpret_cast<unsigned char*>(executable) + 0x1187A0;
+    // Complete instructions only; this prologue contains no relative operands.
+    constexpr unsigned char expected[] = {0x53, 0x8B, 0x5C, 0x24, 0x0C, 0x56};
+    if (std::memcmp(target, expected, sizeof(expected)) != 0) {
+        Log("Company animation hook signature mismatch at %p", target);
+        return false;
+    }
+    auto* trampoline = static_cast<unsigned char*>(VirtualAlloc(
+        nullptr, sizeof(expected) + 5, MEM_COMMIT | MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE));
+    if (!trampoline) {
+        return false;
+    }
+    std::memcpy(trampoline, expected, sizeof(expected));
+    trampoline[sizeof(expected)] = 0xE9;
+    *reinterpret_cast<int32_t*>(trampoline + sizeof(expected) + 1) =
+        static_cast<int32_t>(target - trampoline - 5);
+    DWORD protection = 0;
+    if (!VirtualProtect(target, sizeof(expected), PAGE_EXECUTE_READWRITE,
+                        &protection)) {
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        return false;
+    }
+    g_company_animate_move = reinterpret_cast<GuiAnimateMoveFn>(trampoline);
+    target[0] = 0xE9;
+    *reinterpret_cast<int32_t*>(target + 1) = static_cast<int32_t>(
+        reinterpret_cast<unsigned char*>(&HookCompanyAnimateMove) - target - 5);
+    target[5] = 0x90;
+    DWORD ignored = 0;
+    VirtualProtect(target, sizeof(expected), protection, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), trampoline, sizeof(expected) + 5);
+    FlushInstructionCache(GetCurrentProcess(), target, sizeof(expected));
+    Log("Installed company native-coordinate animation hook at %p", target);
+    return true;
+}
+
+bool InstallCompanyListDrawHook(HMODULE executable) {
+    if (g_company_list_draw) {
+        return true;
+    }
+    auto* target = reinterpret_cast<unsigned char*>(executable) + 0x133700;
+    constexpr unsigned char expected[] = {
+        0x8B, 0x44, 0x24, 0x0C, 0x81, 0xEC, 0x3C, 0x01, 0x00, 0x00};
+    if (std::memcmp(target, expected, sizeof(expected)) != 0) {
+        Log("Company list draw signature mismatch at %p", target);
+        return false;
+    }
+    auto* trampoline = static_cast<unsigned char*>(VirtualAlloc(
+        nullptr, sizeof(expected) + 5, MEM_COMMIT | MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE));
+    if (!trampoline) {
+        return false;
+    }
+    std::memcpy(trampoline, expected, sizeof(expected));
+    trampoline[sizeof(expected)] = 0xE9;
+    *reinterpret_cast<int32_t*>(trampoline + sizeof(expected) + 1) =
+        static_cast<int32_t>(target - trampoline - 5);
+    DWORD protection = 0;
+    if (!VirtualProtect(target, sizeof(expected), PAGE_EXECUTE_READWRITE,
+                        &protection)) {
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        return false;
+    }
+    g_company_list_draw = reinterpret_cast<CompanyListDrawFn>(trampoline);
+    target[0] = 0xE9;
+    *reinterpret_cast<int32_t*>(target + 1) = static_cast<int32_t>(
+        reinterpret_cast<unsigned char*>(&HookCompanyListDraw) - target - 5);
+    std::memset(target + 5, 0x90, sizeof(expected) - 5);
+    DWORD ignored = 0;
+    VirtualProtect(target, sizeof(expected), protection, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), trampoline, sizeof(expected) + 5);
+    FlushInstructionCache(GetCurrentProcess(), target, sizeof(expected));
+    Log("Installed company list render-metrics hook at %p", target);
+    return true;
+}
+
+bool InstallFittedTextDrawHook(HMODULE executable) {
+    if (g_fitted_text_draw) {
+        return true;
+    }
+    auto* target = reinterpret_cast<unsigned char*>(executable) + 0x130310;
+    auto* measure = reinterpret_cast<unsigned char*>(executable) + 0x130710;
+    constexpr unsigned char expected[] = {
+        0x8B, 0x44, 0x24, 0x0C, 0x83, 0xEC, 0x34};
+    constexpr unsigned char measure_expected[] = {
+        0x81, 0xEC, 0x04, 0x01, 0x00, 0x00, 0x56, 0x8B, 0xF1};
+    if (std::memcmp(target, expected, sizeof(expected)) != 0 ||
+        std::memcmp(measure, measure_expected, sizeof(measure_expected)) != 0) {
+        Log("Aspect-fit text draw/measure signature mismatch");
+        return false;
+    }
+    auto* trampoline = static_cast<unsigned char*>(VirtualAlloc(
+        nullptr, sizeof(expected) + 5, MEM_COMMIT | MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE));
+    if (!trampoline) {
+        return false;
+    }
+    std::memcpy(trampoline, expected, sizeof(expected));
+    trampoline[sizeof(expected)] = 0xE9;
+    *reinterpret_cast<int32_t*>(trampoline + sizeof(expected) + 1) =
+        static_cast<int32_t>(target - trampoline - 5);
+    DWORD protection = 0;
+    if (!VirtualProtect(target, sizeof(expected), PAGE_EXECUTE_READWRITE,
+                        &protection)) {
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        return false;
+    }
+    g_fitted_text_measure = reinterpret_cast<TextMeasureFn>(measure);
+    g_fitted_text_draw = reinterpret_cast<CompanyListDrawFn>(trampoline);
+    target[0] = 0xE9;
+    *reinterpret_cast<int32_t*>(target + 1) = static_cast<int32_t>(
+        reinterpret_cast<unsigned char*>(&HookFittedTextDraw) - target - 5);
+    std::memset(target + 5, 0x90, sizeof(expected) - 5);
+    DWORD ignored = 0;
+    VirtualProtect(target, sizeof(expected), protection, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), trampoline, sizeof(expected) + 5);
+    FlushInstructionCache(GetCurrentProcess(), target, sizeof(expected));
+    Log("Installed aspect-fit text rendering hook at %p", target);
+    return true;
+}
+
 bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) {
     if (g_unified_ui.installed || width < LegacyCanvas::width ||
         height < LegacyCanvas::height) {
@@ -6036,6 +6816,15 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
     g_unified_ui.title_screen_mode = title_screen_mode;
     g_unified_ui.trampoline = trampoline;
     g_unified_ui.installed = true;
+    if (!InstallCompanyAnimationHook(executable)) {
+        Log("Company navigation animation correction unavailable");
+    }
+    if (!InstallCompanyListDrawHook(executable)) {
+        Log("Company achievement list render correction unavailable");
+    }
+    if (!InstallFittedTextDrawHook(executable)) {
+        Log("Aspect-fit page font correction unavailable");
+    }
     Log("Installed unified UI layout hook at %p for %ux%u titleMode=%d",
         target, width, height, title_screen_mode);
     return true;
