@@ -4,6 +4,8 @@
 
 namespace stardom {
 
+bool CanReadGuiObject(const void* object);
+
 // Reuses VirtualQuery results only during one synchronous GUI traversal. The
 // cache is discarded before returning to game code, where the GUI pool may be
 // changed or released.

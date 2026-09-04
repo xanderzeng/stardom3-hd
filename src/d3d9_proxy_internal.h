@@ -32,8 +32,6 @@ bool PatchMapLocationProjectionBounds(UINT width, UINT height);
 bool PatchAirportLocationLabelFilter();
 bool PatchMapLocationVisibilityGuards();
 bool InstallMapLocationDiagnosticHook();
-void GetPhotoAlbumViewport(UINT output_width, UINT output_height,
-                           int& x, int& y, int& width, int& height);
 bool IsPhotoAlbumViewportNeeded();
 bool IsPhotoAlbumCGVisible();
 bool IsPhotoAlbumScreenVisible();

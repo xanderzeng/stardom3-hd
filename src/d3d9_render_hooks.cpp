@@ -121,12 +121,9 @@ void UpdatePhotoAlbumViewport(IDirect3DDevice9* device) {
         return;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                              static_cast<int>(g_device_hook.height));
     if (album_visible) {
         const bool differs = current.X != static_cast<DWORD>(viewport_x) ||
             current.Y != static_cast<DWORD>(viewport_y) ||
@@ -461,27 +458,24 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
     // the game from the current artist count.  Accept any such slot contained
     // by the legacy canvas instead of enumerating the 1/2/3/4-artist layouts.
     const bool announcement_preview_position =
-        viewport->X <= 800 && viewport->Y <= 600 &&
+        viewport->X <= LegacyCanvas::width && viewport->Y <= LegacyCanvas::height &&
         viewport->X + viewport->Width <= 810 &&
         viewport->Y + viewport->Height <= 610;
     if (main_target && g_unified_ui.announcement_active &&
         announcement_preview_size &&
         announcement_preview_position) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                                  static_cast<int>(g_device_hook.height));
         D3DVIEWPORT9 scaled_preview = *viewport;
         scaled_preview.X = static_cast<DWORD>(viewport_x +
-            MulDiv(static_cast<int>(viewport->X), viewport_width, 800));
+            MulDiv(static_cast<int>(viewport->X), viewport_width, LegacyCanvas::width));
         scaled_preview.Y = static_cast<DWORD>(viewport_y +
-            MulDiv(static_cast<int>(viewport->Y), viewport_height, 600));
+            MulDiv(static_cast<int>(viewport->Y), viewport_height, LegacyCanvas::height));
         scaled_preview.Width = static_cast<DWORD>(
-            MulDiv(static_cast<int>(viewport->Width), viewport_width, 800));
+            MulDiv(static_cast<int>(viewport->Width), viewport_width, LegacyCanvas::width));
         scaled_preview.Height = static_cast<DWORD>(
-            MulDiv(static_cast<int>(viewport->Height), viewport_height, 600));
+            MulDiv(static_cast<int>(viewport->Height), viewport_height, LegacyCanvas::height));
         return g_device_hook.original_set_viewport(device, &scaled_preview);
     }
 
@@ -514,12 +508,9 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
 
     D3DVIEWPORT9 scaled = *viewport;
     if (IsPhotoAlbumViewportNeeded()) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                                  static_cast<int>(g_device_hook.height));
         scaled.X = static_cast<DWORD>(viewport_x);
         scaled.Y = static_cast<DWORD>(viewport_y);
         scaled.Width = static_cast<DWORD>(viewport_width);
@@ -532,12 +523,9 @@ HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIE
         }
     } else if (g_unified_ui.announcement_active) {
         g_unified_ui.photo_album_viewport_active = false;
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                                  static_cast<int>(g_device_hook.height));
         scaled.X = static_cast<DWORD>(viewport_x);
         scaled.Y = static_cast<DWORD>(viewport_y);
         scaled.Width = static_cast<DWORD>(viewport_width);
@@ -768,12 +756,9 @@ bool ScaleAirportAirplaneVertices(
         return false;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                              static_cast<int>(g_device_hook.height));
     const float center_x = (min_x + max_x) * 0.5f;
     const float center_y = (min_y + max_y) * 0.5f;
     scaled.assign(source, source + static_cast<size_t>(kVertexCount) * stride);
@@ -784,9 +769,9 @@ bool ScaleAirportAirplaneVertices(
         // Preserve that live center and scale only the visual dimensions so
         // the sprite does not drift down-right along the animation.
         position[0] = center_x + (position[0] - center_x) *
-            static_cast<float>(viewport_width) / 800.0f;
+            static_cast<float>(viewport_width) / static_cast<float>(LegacyCanvas::width);
         position[1] = center_y + (position[1] - center_y) *
-            static_cast<float>(viewport_height) / 600.0f;
+            static_cast<float>(viewport_height) / static_cast<float>(LegacyCanvas::height);
     }
     return true;
 }
@@ -1051,12 +1036,9 @@ TitleScreenClipState BeginTitleScreenClip(
         return state;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                              static_cast<int>(g_device_hook.height));
     RECT title_rect = loading_page ? loading_rect : RECT{
         viewport_x, viewport_y,
         viewport_x + viewport_width, viewport_y + viewport_height};
@@ -1213,12 +1195,9 @@ bool ClearInGameCGPillarboxBeforePrimitive(
     buffer->Unlock();
     buffer->Release();
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                              static_cast<int>(g_device_hook.height));
     const bool cg_image_quad =
         NearlyEqual(min_x, static_cast<float>(viewport_x), 2.0f) &&
         NearlyEqual(min_y, static_cast<float>(viewport_y), 2.0f) &&
@@ -1261,8 +1240,8 @@ bool ClearInGameCGPillarboxBeforePrimitive(
 bool IsAnnouncementLegacyQuad(float min_x, float min_y,
                               float max_x, float max_y) {
     const bool background = NearlyEqual(min_x, 0.0f) &&
-        NearlyEqual(min_y, 0.0f) && NearlyEqual(max_x, 800.0f) &&
-        NearlyEqual(max_y, 600.0f);
+        NearlyEqual(min_y, 0.0f) && NearlyEqual(max_x, static_cast<float>(LegacyCanvas::width)) &&
+        NearlyEqual(max_y, static_cast<float>(LegacyCanvas::height));
     const bool preview = NearlyEqual(max_x - min_x, 360.0f) &&
         NearlyEqual(max_y - min_y, 200.0f) && min_x >= -1.0f &&
         min_y >= -1.0f && max_x <= 801.0f && max_y <= 601.0f;
@@ -1418,12 +1397,9 @@ void ClearTrainingPillarbox(IDirect3DDevice9* device) {
         return;
     }
 
-    int viewport_x = 0;
-    int viewport_y = 0;
-    int viewport_width = 0;
-    int viewport_height = 0;
-    GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-        viewport_x, viewport_y, viewport_width, viewport_height);
+    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+        AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                              static_cast<int>(g_device_hook.height));
     if (viewport_x <= 0 || viewport_x + viewport_width >=
             static_cast<int>(g_device_hook.width)) {
         return;
@@ -1504,8 +1480,8 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
         max_y = std::max(max_y, position[1]);
     }
     const bool full_legacy_canvas = NearlyEqual(min_x, 0.0f) &&
-        NearlyEqual(min_y, 0.0f) && NearlyEqual(max_x, 800.0f) &&
-        NearlyEqual(max_y, 600.0f);
+        NearlyEqual(min_y, 0.0f) && NearlyEqual(max_x, static_cast<float>(LegacyCanvas::width)) &&
+        NearlyEqual(max_y, static_cast<float>(LegacyCanvas::height));
     const bool known_announcement_quad = IsAnnouncementLegacyQuad(
         min_x, min_y, max_x, max_y);
     const bool album_snapshot = full_legacy_canvas &&
@@ -1520,19 +1496,16 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
     float offset_x = 0.0f;
     float offset_y = 0.0f;
     if (album_snapshot) {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                                  static_cast<int>(g_device_hook.height));
         for (UINT i = 0; i < kVertexCount; ++i) {
             auto* position = reinterpret_cast<float*>(
                 shifted.data() + static_cast<size_t>(i) * stride);
             position[0] = static_cast<float>(viewport_x) +
-                position[0] * viewport_width / 800.0f;
+                position[0] * viewport_width / static_cast<float>(LegacyCanvas::width);
             position[1] = static_cast<float>(viewport_y) +
-                position[1] * viewport_height / 600.0f;
+                position[1] * viewport_height / static_cast<float>(LegacyCanvas::height);
         }
 
         // The transition texture is a downsample of the complete output, so
@@ -1586,21 +1559,18 @@ bool DrawShiftedAnnouncementPrimitive(IDirect3DDevice9* device,
         offset_x = static_cast<float>(viewport_x);
         offset_y = static_cast<float>(viewport_y);
     } else {
-        int viewport_x = 0;
-        int viewport_y = 0;
-        int viewport_width = 0;
-        int viewport_height = 0;
-        GetPhotoAlbumViewport(g_device_hook.width, g_device_hook.height,
-            viewport_x, viewport_y, viewport_width, viewport_height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_device_hook.width),
+                                  static_cast<int>(g_device_hook.height));
         offset_x = static_cast<float>(viewport_x);
         offset_y = static_cast<float>(viewport_y);
         for (UINT i = 0; i < kVertexCount; ++i) {
             auto* position = reinterpret_cast<float*>(
                 shifted.data() + static_cast<size_t>(i) * stride);
             position[0] = offset_x +
-                position[0] * viewport_width / 800.0f;
+                position[0] * viewport_width / static_cast<float>(LegacyCanvas::width);
             position[1] = offset_y +
-                position[1] * viewport_height / 600.0f;
+                position[1] * viewport_height / static_cast<float>(LegacyCanvas::height);
         }
     }
 
@@ -1642,9 +1612,9 @@ bool NormalizeAwardsScreenVertices(IDirect3DDevice9* device,
     }
 
     const float root_x = static_cast<float>(
-        (static_cast<int>(g_device_hook.width) - 800) / 2);
+        (static_cast<int>(g_device_hook.width) - LegacyCanvas::width) / 2);
     const float root_y = static_cast<float>(
-        (static_cast<int>(g_device_hook.height) - 600) / 2);
+        (static_cast<int>(g_device_hook.height) - LegacyCanvas::height) / 2);
     if (NearlyEqual(root_x, 0.0f) && NearlyEqual(root_y, 0.0f)) {
         return false;
     }
