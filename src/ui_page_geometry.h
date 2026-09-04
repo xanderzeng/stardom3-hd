@@ -40,6 +40,9 @@ bool IsInventoryTargetTree(void* object, void* primary_root);
 // ItemTarget controller mixes fitted card coordinates with native offsets.
 void FitInventoryTargetPosition(int card_x, int card_y, int viewport_x,
     int viewport_y, int viewport_width, int viewport_height, int& x, int& y);
+bool IsBigActivityPageTree(void* object, void* primary_root);
+bool IsBigActivityOptionPanel(void* object, void* parent,
+                              int screen_width, int screen_height);
 
 // Standard aspect-fit roots only. Special per-control animation transforms
 // remain outside this dispatcher. Rules run root then descendants in order.

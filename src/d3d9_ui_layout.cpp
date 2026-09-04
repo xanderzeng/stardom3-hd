@@ -525,6 +525,11 @@ bool IsInventoryPage(void* object, void* parent, int, int) {
         IsInventoryPageTree(object, g_unified_ui.primary_root);
 }
 
+bool IsBigActivityPage(void* object, void* parent, int, int) {
+    return parent == g_unified_ui.primary_root &&
+        IsBigActivityPageTree(object, g_unified_ui.primary_root);
+}
+
 bool IsArtistContractPage(void* object, void* parent,
                           int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -1980,6 +1985,12 @@ void* g_inventory_root = nullptr;
 void* g_inventory_target_root = nullptr;
 TitleNativeGeometry g_inventory_target_geometry[8]{};
 size_t g_inventory_target_geometry_count = 0;
+TitleNativeGeometry g_big_activity_geometry[512]{};
+size_t g_big_activity_geometry_count = 0;
+void* g_big_activity_root = nullptr;
+TitleNativeGeometry g_big_activity_option_geometry[128]{};
+size_t g_big_activity_option_geometry_count = 0;
+void* g_big_activity_option_root = nullptr;
 size_t g_artist_contract_geometry_count = 0;
 void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
@@ -2337,6 +2348,41 @@ void ResetInventoryGeometry(void* root) {
 void ScaleInventorySubtree(void* object, int depth = 0) {
     ScaleAspectFitSubtree(object, depth, g_inventory_geometry,
         g_inventory_geometry_count, ResetInventoryGeometry, 6, 64);
+}
+
+void ResetBigActivityGeometry(void* root) {
+    if (g_big_activity_root == root) return;
+    g_big_activity_root = root;
+    g_big_activity_geometry_count = 0;
+}
+
+void ScaleBigActivitySubtree(void* object, int depth = 0) {
+    ScaleAspectFitSubtree(object, depth, g_big_activity_geometry,
+        g_big_activity_geometry_count, ResetBigActivityGeometry, 7, 512);
+}
+
+void ScaleBigActivityOption(void* object) {
+    if (!g_unified_ui.trampoline || !CanReadGuiObject(object)) return;
+    if (g_big_activity_option_root != object) {
+        g_big_activity_option_root = object;
+        g_big_activity_option_geometry_count = 0;
+    }
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    GuiField<int>(object, GuiObjectField::width) = MulDiv(360, viewport.width, 800);
+    GuiField<int>(object, GuiObjectField::height) = MulDiv(370, viewport.height, 600);
+    original(object, viewport.x + (viewport.width - GuiField<int>(object, GuiObjectField::width)) / 2,
+             viewport.y + (viewport.height - GuiField<int>(object, GuiObjectField::height)) / 2);
+    // PlaneMove owns four siblings: three tabs and the entire content panel.
+    // A subtree traversal starting at first_child does not visit its siblings.
+    ForEachGuiChild(object, 128, [&](void* child) {
+        ScaleAspectFitSubtree(child, 1,
+            g_big_activity_option_geometry, g_big_activity_option_geometry_count,
+            [](void*) {}, 7, 128);
+    });
+    RememberLayoutRoot(object);
+    RememberProcessedLayoutObject(object);
 }
 
 void DiscoverInventory(void* candidate) {
@@ -2761,6 +2807,7 @@ bool IsAspectFittedTextObject(void* object) {
         g_title_tutorial_question_root, g_announcement_root,
         g_artist_profile_root, g_artist_contract_root, g_artist_signing_root,
         g_inventory_root,
+        g_big_activity_root, g_big_activity_option_root,
         g_company_revenue_root, g_company_navigation_root,
         g_airport_selection_root, g_studio_event_list_root,
         g_studio_event_editor_root, g_training_minigame_root,
@@ -4687,6 +4734,12 @@ bool ReflowAspectFitPageRules(const StaticPageReflowRule* rules, size_t rule_cou
 }
 
 bool ReflowStaticAspectFitPage(void* child, void* parent, int width, int height) {
+    if (child == g_big_activity_option_root || IsBigActivityOptionPanel(
+            child, parent, static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height))) {
+        ScaleBigActivityOption(child);
+        return true;
+    }
     // Detached item recipient popup is positioned by its controller, not by
     // generic legacy edge anchoring or the 800x600 page-root transformer.
     if (child == g_inventory_target_root) {
@@ -4707,6 +4760,8 @@ bool ReflowStaticAspectFitPage(void* child, void* parent, int width, int height)
          ScaleArtistSigningSubtree, "artist signing"},
         {g_inventory_root, IsInventoryPage, ResetInventoryGeometry,
          ScaleInventorySubtree, "inventory", PageRefreshPolicy::PreserveControllerState},
+        {g_big_activity_root, IsBigActivityPage, ResetBigActivityGeometry,
+         ScaleBigActivitySubtree, "large activity", PageRefreshPolicy::PreserveControllerState},
     };
     return ReflowAspectFitPageRules(rules, std::size(rules),
                                     child, parent, width, height);
@@ -5794,6 +5849,36 @@ bool MoveInventoryPage(PageMoveContext& context) {
     return true;
 }
 
+bool MoveBigActivityPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    if (!g_big_activity_root &&
+        IsBigActivityPageTree(self, g_unified_ui.primary_root)) {
+        ResetBigActivityGeometry(self);
+        RememberLayoutRoot(self);
+        ScaleBigActivitySubtree(self);
+        return true;
+    }
+    if (self == g_big_activity_option_root || IsBigActivityOptionPanel(
+            self, parent, static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height))) {
+        ScaleBigActivityOption(self);
+        return true;
+    }
+    const StaticPageMoveRule rules[] = {
+        {g_big_activity_root, g_big_activity_geometry,
+         std::size(g_big_activity_geometry), &g_big_activity_geometry_count, 7,
+         PageMoveCoordinates::SubmittedNative},
+        {g_big_activity_option_root, g_big_activity_option_geometry,
+         std::size(g_big_activity_option_geometry), &g_big_activity_option_geometry_count, 7,
+         PageMoveCoordinates::SubmittedNative},
+    };
+    if (!ApplyStaticPageMove(rules, std::size(rules), self, parent,
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height),
+            x, y, IsRepeatedObjectPosition)) return false;
+    original(self, x, y);
+    return true;
+}
+
 bool MoveCompanyNavigationPage(PageMoveContext& context) {
     auto& [self, parent, x, y, original, executable, immediate_call] = context;
     auto* bytes = static_cast<unsigned char*>(self);
@@ -6168,6 +6253,7 @@ bool DispatchAspectFitPageMove(PageMoveContext& context) {
         MoveTitlePage,
         MoveStaticPage,
         MoveInventoryPage,
+        MoveBigActivityPage,
         MoveCompanyNavigationPage,
         MoveCompanySectionPage,
         MoveCompanyRevenuePage,

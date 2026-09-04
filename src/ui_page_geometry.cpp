@@ -8,6 +8,52 @@
 
 namespace stardom {
 
+bool IsBigActivityPageTree(void* object, void* primary_root) {
+    if (!primary_root || !CanReadGuiObject(object) ||
+        GuiPointer(object, GuiObjectField::parent) != primary_root ||
+        GuiField<int>(object, GuiObjectField::width) != 800 ||
+        GuiField<int>(object, GuiObjectField::height) != 600) return false;
+    void* panel = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(panel) || GuiPointer(panel, GuiObjectField::next_sibling) ||
+        GuiField<int>(panel, GuiObjectField::x) != 150 ||
+        GuiField<int>(panel, GuiObjectField::y) != 96 ||
+        GuiField<int>(panel, GuiObjectField::width) != 459 ||
+        GuiField<int>(panel, GuiObjectField::height) != 413) return false;
+    int rows = 0;
+    bool up = false, down = false, exit = false;
+    void* child = GuiPointer(panel, GuiObjectField::first_child);
+    for (int visited = 0; CanReadGuiObject(child) && visited < 96; ++visited) {
+        const int x = GuiField<int>(child, GuiObjectField::x), y = GuiField<int>(child, GuiObjectField::y);
+        const int w = GuiField<int>(child, GuiObjectField::width), h = GuiField<int>(child, GuiObjectField::height);
+        rows += x >= 88 && x <= 92 && y >= 30 && y <= 310 && y % 40 == 30 && w == 310 && h == 40;
+        up |= x == 410 && y == 30 && w == 28 && h == 79;
+        down |= x == 410 && y == 271 && w == 28 && h == 79;
+        exit |= x == 345 && y == 358 && w == 92 && h == 32;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return rows >= 8 && up && down && exit;
+}
+
+bool IsBigActivityOptionPanel(void* object, void* parent,
+                              int screen_width, int screen_height) {
+    if (!CanReadGuiObject(object) || !CanReadGuiObject(parent) ||
+        GuiField<int>(parent, GuiObjectField::width) != screen_width ||
+        GuiField<int>(parent, GuiObjectField::height) != screen_height ||
+        GuiField<int>(object, GuiObjectField::width) != 360 ||
+        GuiField<int>(object, GuiObjectField::height) != 370) return false;
+    int tabs = 0;
+    bool back = false;
+    void* child = GuiPointer(object, GuiObjectField::first_child);
+    for (int visited = 0; CanReadGuiObject(child) && visited < 8; ++visited) {
+        const int x = GuiField<int>(child, GuiObjectField::x), y = GuiField<int>(child, GuiObjectField::y);
+        const int w = GuiField<int>(child, GuiObjectField::width), h = GuiField<int>(child, GuiObjectField::height);
+        tabs += x >= 35 && x <= 225 && y >= 0 && y <= 3 && w == 110 && h == 45;
+        back |= x == 0 && y == 43 && w == 358 && h == 322;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return tabs == 3 && back;
+}
+
 void FitInventoryTargetPosition(int card_x, int card_y, int viewport_x,
         int viewport_y, int viewport_width, int viewport_height, int& x, int& y) {
     x = viewport_x + card_x + MulDiv(x - card_x, viewport_width, LegacyCanvas::width);

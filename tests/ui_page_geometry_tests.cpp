@@ -1,6 +1,7 @@
 #include "gui_object.h"
 #include "ui_page_geometry.h"
 #include "ui_dispatch.h"
+#include "ui_geometry.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -673,10 +674,96 @@ bool TestInventoryTarget() {
     return ok;
 }
 
+bool TestBigActivityPages() {
+    using namespace stardom;
+    bool ok = true;
+    TestGuiObject primary{}, root{}, panel{}, controls[12]{};
+    SetGeometry(root, 0, 0, 800, 600);
+    SetGeometry(panel, 150, 96, 459, 413);
+    GuiField<void*>(root.bytes, GuiObjectField::parent) = primary.bytes;
+    GuiField<void*>(root.bytes, GuiObjectField::first_child) = panel.bytes;
+    GuiField<void*>(panel.bytes, GuiObjectField::parent) = root.bytes;
+    GuiField<void*>(panel.bytes, GuiObjectField::first_child) = controls[0].bytes;
+    for (int i = 0; i < 12; ++i) {
+        GuiField<void*>(controls[i].bytes, GuiObjectField::parent) = panel.bytes;
+        if (i < 11) GuiField<void*>(controls[i].bytes, GuiObjectField::next_sibling) = controls[i + 1].bytes;
+    }
+    for (int i = 0; i < 8; ++i) SetGeometry(controls[i], 90, 30 + i * 40, 310, 40);
+    SetGeometry(controls[8], 410, 30, 28, 79);
+    SetGeometry(controls[9], 410, 271, 28, 79);
+    SetGeometry(controls[10], 345, 358, 92, 32);
+    SetGeometry(controls[11], 10, 30, 84, 28);
+    ok &= Expect(IsBigActivityPageTree(root.bytes, primary.bytes), "large activity resource tree must match");
+    SetGeometry(controls[6], 91, 270, 310, 40);
+    ok &= Expect(IsBigActivityPageTree(root.bytes, primary.bytes), "live selected-row offset must match");
+    SetGeometry(controls[9], 410, 270, 28, 79);
+    ok &= Expect(!IsBigActivityPageTree(root.bytes, primary.bytes), "missing scroll control must reject activity page");
+
+    TestGuiObject screen{}, option{}, option_children[4]{};
+    SetGeometry(screen, 0, 0, 1920, 1080);
+    SetGeometry(option, 1523, 372, 360, 370);
+    GuiField<void*>(option.bytes, GuiObjectField::parent) = screen.bytes;
+    GuiField<void*>(option.bytes, GuiObjectField::first_child) = option_children[0].bytes;
+    for (int i = 0; i < 4; ++i)
+        if (i < 3) GuiField<void*>(option_children[i].bytes, GuiObjectField::next_sibling) = option_children[i + 1].bytes;
+    SetGeometry(option_children[0], 0, 43, 358, 322);
+    SetGeometry(option_children[1], 35, 0, 110, 45);
+    SetGeometry(option_children[2], 130, 3, 110, 45);
+    SetGeometry(option_children[3], 225, 3, 110, 45);
+    ok &= Expect(IsBigActivityOptionPanel(option.bytes, screen.bytes, 1920, 1080),
+        "large activity option panel must match despite bad runtime offset");
+    SetGeometry(option_children[3], 225, 3, 100, 45);
+    ok &= Expect(!IsBigActivityOptionPanel(option.bytes, screen.bytes, 1920, 1080),
+        "unrelated full-screen popup must not match");
+    const RectI viewport = AspectFitLegacyCanvas(1920, 1080);
+    ok &= Expect(viewport.x + (viewport.width - 360 * viewport.width / 800) / 2 == 636 &&
+        viewport.y + (viewport.height - 370 * viewport.height / 600) / 2 == 207,
+        "activity option must center in fitted viewport");
+    return ok;
+}
+
+bool TestActivityOptionChildCoverage() {
+    using namespace stardom;
+    TestGuiObject panel{}, tab1{}, back{}, tab2{}, tab3{}, label{}, button{};
+    GuiField<void*>(panel.bytes, GuiObjectField::first_child) = tab1.bytes;
+    GuiField<void*>(tab1.bytes, GuiObjectField::next_sibling) = back.bytes;
+    GuiField<void*>(back.bytes, GuiObjectField::next_sibling) = tab2.bytes;
+    GuiField<void*>(tab2.bytes, GuiObjectField::next_sibling) = tab3.bytes;
+    GuiField<void*>(back.bytes, GuiObjectField::first_child) = label.bytes;
+    GuiField<void*>(label.bytes, GuiObjectField::next_sibling) = button.bytes;
+    void* expected[] = {tab1.bytes, back.bytes, label.bytes, button.bytes, tab2.bytes, tab3.bytes};
+    size_t count = 0;
+    bool order = true;
+    auto enter = [&](void* object, int depth) {
+        order &= count < std::size(expected) && object == expected[count];
+        order &= depth == (object == label.bytes || object == button.bytes ? 2 : 1);
+        ++count;
+        return true;
+    };
+    auto leave = [](void*, int) {};
+    ForEachGuiChild(panel.bytes, 128, [&](void* child) {
+        VisitGuiSubtree(child, 1, 7, 128, enter, leave);
+    });
+    bool ok = Expect(order && count == 6,
+        "option fit must cover all three sibling tabs and the content subtree exactly once");
+    count = 0;
+    ForEachGuiChild(panel.bytes, 2, [&](void*) { ++count; });
+    ok &= Expect(count == 2, "direct-child traversal must respect its bound");
+    count = 0;
+    ForEachGuiChild(panel.bytes, 128, [&](void* child) {
+        ++count;
+        GuiField<void*>(child, GuiObjectField::next_sibling) = nullptr;
+    });
+    ok &= Expect(count == 4, "direct-child traversal must retain next link before moving a child");
+    return ok;
+}
+
 int main() {
     using namespace stardom;
     bool ok = TestInventoryPage();
     ok &= TestInventoryTarget();
+    ok &= TestBigActivityPages();
+    ok &= TestActivityOptionChildCoverage();
     ok &= TestStaticPageMoves();
     ok &= TestStaticPageAncestorLimits();
     ok &= TestStaticPageReflow();

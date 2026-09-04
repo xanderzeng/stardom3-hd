@@ -5,6 +5,19 @@
 
 namespace stardom {
 
+// Visit all direct children, not only the first child's subtree. Retain the
+// next link before callbacks that can reorder the game's sibling list.
+template <typename Visit>
+void ForEachGuiChild(void* parent, size_t maximum_children, Visit visit) {
+    if (!CanReadGuiObject(parent)) return;
+    void* child = GuiPointer(parent, GuiObjectField::first_child);
+    for (size_t count = 0; CanReadGuiObject(child) && count < maximum_children; ++count) {
+        void* next = GuiPointer(child, GuiObjectField::next_sibling);
+        visit(child);
+        child = next;
+    }
+}
+
 // The first handled branch owns the operation. Mutations to context made by
 // an unhandled branch remain visible to the following branch, as in an if chain.
 template <typename Handler, size_t Count, typename Context>
