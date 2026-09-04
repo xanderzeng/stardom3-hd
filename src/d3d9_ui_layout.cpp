@@ -96,14 +96,14 @@ bool IsRadialInteractionWheel(void* object, void* parent,
     size_t count = 0;
     while (CanReadGuiObject(child) && count < 5) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
         if (child_width < 30 || child_width > 34 ||
             child_height < 30 || child_height > 34) {
             return false;
         }
         ++count;
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return count == 4 && child == nullptr;
 }
@@ -144,10 +144,10 @@ bool IsWorldStatusBubble(void* object, void* parent,
         return false;
     }
     auto* child_bytes = static_cast<unsigned char*>(child);
-    const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-    const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
-    void* grandchild = *reinterpret_cast<void**>(child_bytes + 0xF4);
-    void* next_child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+    const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+    const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
+    void* grandchild = GuiField<void*>(child_bytes, GuiObjectField::first_child);
+    void* next_child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     return !grandchild && !next_child && child_width >= 20 &&
         child_width <= 140 && child_height >= 18 && child_height <= 24;
 }
@@ -218,15 +218,15 @@ bool IsSmallWorldDialogueBubble(void* object, void* parent,
         return false;
     }
     auto* first_bytes = static_cast<unsigned char*>(first);
-    const int first_width = *reinterpret_cast<int*>(first_bytes + 0x88);
-    const int first_height = *reinterpret_cast<int*>(first_bytes + 0x8C);
-    void* second = *reinterpret_cast<void**>(first_bytes + 0xF8);
+    const int first_width = GuiField<int>(first_bytes, GuiObjectField::width);
+    const int first_height = GuiField<int>(first_bytes, GuiObjectField::height);
+    void* second = GuiField<void*>(first_bytes, GuiObjectField::next_sibling);
     if (!CanReadGuiObject(second)) {
         return false;
     }
     auto* second_bytes = static_cast<unsigned char*>(second);
-    const int second_width = *reinterpret_cast<int*>(second_bytes + 0x88);
-    const int second_height = *reinterpret_cast<int*>(second_bytes + 0x8C);
+    const int second_width = GuiField<int>(second_bytes, GuiObjectField::width);
+    const int second_height = GuiField<int>(second_bytes, GuiObjectField::height);
     return first_width >= 30 && first_width <= 34 &&
         first_height >= 30 && first_height <= 34 &&
         second_width >= 80 && second_width <= 190 &&
@@ -318,7 +318,7 @@ extern void* g_title_tutorial_root;
 bool HasTitleTutorialPage() {
     if (CanReadGuiObject(g_title_tutorial_root)) {
         auto* bytes = static_cast<unsigned char*>(g_title_tutorial_root);
-        if (*reinterpret_cast<void**>(bytes + 0xF0) ==
+        if (GuiField<void*>(bytes, GuiObjectField::parent) ==
                 g_unified_ui.primary_root && *(bytes + 0x99) != 0) {
             return true;
         }
@@ -331,13 +331,13 @@ bool HasTitleTutorialPage() {
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 512) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int width = GuiField<int>(bytes, GuiObjectField::width);
+        const int height = GuiField<int>(bytes, GuiObjectField::height);
         if (IsTitleTutorialPage(
                 child, g_unified_ui.primary_root, width, height)) {
             return true;
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return false;
 }
@@ -370,10 +370,10 @@ bool IsTitleTutorialProfileDropdown(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         rows += child_x >= 3 && child_x <= 7 &&
             child_y >= 3 && child_y <= 107 &&
             child_width >= width - 33 && child_width <= width - 29 &&
@@ -383,7 +383,7 @@ bool IsTitleTutorialProfileDropdown(void* object, void* parent,
              child_y >= 101 && child_y <= 105) &&
             child_width >= 17 && child_width <= 21 &&
             child_height >= 27 && child_height <= 31;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited == 7 && rows == 5 && arrows == 2;
 }
@@ -395,7 +395,7 @@ bool HasStudioEventEditorPage() {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_studio_event_editor_root);
-    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+    return GuiField<void*>(bytes, GuiObjectField::parent) ==
             g_unified_ui.primary_root && *(bytes + 0x99) != 0;
 }
 
@@ -417,10 +417,10 @@ bool IsStudioEventEditorDropdown(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         rows += child_x >= 3 && child_x <= 7 &&
             child_y >= 3 && child_y <= 107 &&
             child_width >= width - 33 && child_width <= width - 29 &&
@@ -430,7 +430,7 @@ bool IsStudioEventEditorDropdown(void* object, void* parent,
              child_y >= 101 && child_y <= 105) &&
             child_width >= 17 && child_width <= 21 &&
             child_height >= 27 && child_height <= 31;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited == 7 && rows == 5 && arrows == 2;
 }
@@ -455,10 +455,10 @@ bool IsTitleTutorialQuestionPage(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         const bool answer_x =
             (child_x >= 48 && child_x <= 52) ||
             (child_x >= 298 && child_x <= 302) ||
@@ -470,7 +470,7 @@ bool IsTitleTutorialQuestionPage(void* object, void* parent,
             child_y >= 268 && child_y <= 272 &&
             child_width >= 462 && child_width <= 466 &&
             child_height >= 149 && child_height <= 153;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited == 4 && answer_buttons == 3 && question_panel;
 }
@@ -495,10 +495,10 @@ bool IsArtistProfilePage(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 10) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         const bool tab_x =
             (child_x >= 158 && child_x <= 162) ||
             (child_x >= 273 && child_x <= 277) ||
@@ -515,7 +515,7 @@ bool IsArtistProfilePage(void* object, void* parent,
             child_y >= 48 && child_y <= 52 &&
             child_width >= 98 && child_width <= 102 &&
             child_height >= 498 && child_height <= 502;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited == 6 && tabs == 4 && profile_card && side_strip;
 }
@@ -532,33 +532,33 @@ bool IsArtistContractPage(void* object, void* parent,
     // button action column as well, so unrelated single-card dialogs retain
     // the native-size centred-page layout.
     auto* root_bytes = static_cast<unsigned char*>(object);
-    void* card = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* card = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     if (!CanReadGuiObject(card)) {
         return false;
     }
     auto* card_bytes = static_cast<unsigned char*>(card);
-    if (*reinterpret_cast<int*>(card_bytes + 0x80) < 137 ||
-        *reinterpret_cast<int*>(card_bytes + 0x80) > 141 ||
-        *reinterpret_cast<int*>(card_bytes + 0x84) < 153 ||
-        *reinterpret_cast<int*>(card_bytes + 0x84) > 157 ||
-        *reinterpret_cast<int*>(card_bytes + 0x88) < 520 ||
-        *reinterpret_cast<int*>(card_bytes + 0x88) > 524 ||
-        *reinterpret_cast<int*>(card_bytes + 0x8C) < 288 ||
-        *reinterpret_cast<int*>(card_bytes + 0x8C) > 292 ||
-        *reinterpret_cast<void**>(card_bytes + 0xF8) != nullptr) {
+    if (GuiField<int>(card_bytes, GuiObjectField::x) < 137 ||
+        GuiField<int>(card_bytes, GuiObjectField::x) > 141 ||
+        GuiField<int>(card_bytes, GuiObjectField::y) < 153 ||
+        GuiField<int>(card_bytes, GuiObjectField::y) > 157 ||
+        GuiField<int>(card_bytes, GuiObjectField::width) < 520 ||
+        GuiField<int>(card_bytes, GuiObjectField::width) > 524 ||
+        GuiField<int>(card_bytes, GuiObjectField::height) < 288 ||
+        GuiField<int>(card_bytes, GuiObjectField::height) > 292 ||
+        GuiField<void*>(card_bytes, GuiObjectField::next_sibling) != nullptr) {
         return false;
     }
 
     int action_buttons = 0;
     bool portrait = false;
-    void* child = *reinterpret_cast<void**>(card_bytes + 0xF4);
+    void* child = GuiField<void*>(card_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 20) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         const bool action_y =
             (child_y >= 149 && child_y <= 153) ||
             (child_y >= 189 && child_y <= 193) ||
@@ -570,7 +570,7 @@ bool IsArtistContractPage(void* object, void* parent,
             child_y >= 31 && child_y <= 35 &&
             child_width >= 98 && child_width <= 102 &&
             child_height >= 118 && child_height <= 122;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited == 13 && action_buttons == 3 && portrait;
 }
@@ -587,33 +587,33 @@ bool IsArtistSigningPage(void* object, void* parent,
     // and intentionally remains at its authored size; only the dossier and
     // its hit-test controls are aspect-fitted here.
     auto* root_bytes = static_cast<unsigned char*>(object);
-    void* panel = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* panel = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     if (!CanReadGuiObject(panel)) {
         return false;
     }
     auto* panel_bytes = static_cast<unsigned char*>(panel);
-    if (*reinterpret_cast<int*>(panel_bytes + 0x80) < 181 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x80) > 185 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x84) < 93 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x84) > 97 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x88) < 432 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x88) > 436 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x8C) < 408 ||
-        *reinterpret_cast<int*>(panel_bytes + 0x8C) > 412 ||
-        *reinterpret_cast<void**>(panel_bytes + 0xF8) != nullptr) {
+    if (GuiField<int>(panel_bytes, GuiObjectField::x) < 181 ||
+        GuiField<int>(panel_bytes, GuiObjectField::x) > 185 ||
+        GuiField<int>(panel_bytes, GuiObjectField::y) < 93 ||
+        GuiField<int>(panel_bytes, GuiObjectField::y) > 97 ||
+        GuiField<int>(panel_bytes, GuiObjectField::width) < 432 ||
+        GuiField<int>(panel_bytes, GuiObjectField::width) > 436 ||
+        GuiField<int>(panel_bytes, GuiObjectField::height) < 408 ||
+        GuiField<int>(panel_bytes, GuiObjectField::height) > 412 ||
+        GuiField<void*>(panel_bytes, GuiObjectField::next_sibling) != nullptr) {
         return false;
     }
 
     int action_buttons = 0;
     bool portrait = false;
-    void* child = *reinterpret_cast<void**>(panel_bytes + 0xF4);
+    void* child = GuiField<void*>(panel_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 40) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         const bool button_x =
             (child_x >= 183 && child_x <= 187) ||
             (child_x >= 293 && child_x <= 297);
@@ -624,7 +624,7 @@ bool IsArtistSigningPage(void* object, void* parent,
             child_y >= 25 && child_y <= 29 &&
             child_width >= 98 && child_width <= 102 &&
             child_height >= 118 && child_height <= 122;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited >= 20 && action_buttons == 2 && portrait;
 }
@@ -847,17 +847,17 @@ bool IsStudioEventListPage(void* object, void* parent,
     size_t root_children = 0;
     while (CanReadGuiObject(child) && root_children++ < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         if (child_x >= 18 && child_x <= 22 &&
             child_y >= 9 && child_y <= 13 &&
             child_width >= 758 && child_width <= 762 &&
             child_height >= 565 && child_height <= 569) {
             ground = child;
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     if (!CanReadGuiObject(ground)) {
         return false;
@@ -871,10 +871,10 @@ bool IsStudioEventListPage(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 256) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         event_rows += child_x >= 224 && child_x <= 228 &&
             child_y >= 83 && child_y <= 447 &&
             child_width >= 478 && child_width <= 482 &&
@@ -887,7 +887,7 @@ bool IsStudioEventListPage(void* object, void* parent,
             child_y >= 162 && child_y <= 166 &&
             child_width >= 26 && child_width <= 30 &&
             child_height >= 224 && child_height <= 228;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return event_rows == 10 && exit_button && scroll_track;
 }
@@ -909,17 +909,17 @@ bool IsStudioEventEditorPage(void* object, void* parent,
     size_t root_children = 0;
     while (CanReadGuiObject(child) && root_children++ < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         if (child_x >= 18 && child_x <= 22 &&
             child_y >= 9 && child_y <= 13 &&
             child_width >= 758 && child_width <= 762 &&
             child_height >= 575 && child_height <= 579) {
             panel = child;
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     if (!CanReadGuiObject(panel)) {
         return false;
@@ -933,10 +933,10 @@ bool IsStudioEventEditorPage(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 512) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         first_dialogue |= child_x >= -2 && child_x <= 2 &&
             child_y >= 148 && child_y <= 152 &&
             child_width >= 698 && child_width <= 702 &&
@@ -949,7 +949,7 @@ bool IsStudioEventEditorPage(void* object, void* parent,
             child_y >= 531 && child_y <= 535 &&
             child_width >= 96 && child_width <= 100 &&
             child_height >= 26 && child_height <= 30;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return first_dialogue && second_dialogue && action_buttons == 5;
 }
@@ -974,10 +974,10 @@ bool IsTrainingMinigamePanel(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 20) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         timer_panels += child_x >= 53 && child_x <= 57 &&
             child_y >= 2 && child_y <= 6 &&
             child_width >= 213 && child_width <= 217 &&
@@ -990,7 +990,7 @@ bool IsTrainingMinigamePanel(void* object, void* parent,
             child_y >= 118 && child_y <= 122 &&
             child_width >= 398 && child_width <= 402 &&
             child_height >= 228 && child_height <= 232;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visited >= 8 && timer_panels == 1 && full_frame && play_surface;
 }
@@ -1023,14 +1023,14 @@ bool IsEventPublicationCover(void* object, void* parent,
         static_cast<unsigned char*>(object) + 0xF4);
     while (CanReadGuiObject(child) && child_count < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         if (child_width >= 328 && child_width <= 332) {
             full_layers += child_height >= 448 && child_height <= 452;
             header_layers += child_height >= 288 && child_height <= 304;
         }
         ++child_count;
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return child_count == 4 && full_layers == 3 && header_layers == 1;
 }
@@ -1053,13 +1053,13 @@ void ScanLoadingPageSignature(void* parent, int origin_x, int origin_y,
         return;
     }
     auto* parent_bytes = static_cast<unsigned char*>(parent);
-    void* child = *reinterpret_cast<void**>(parent_bytes + 0xF4);
+    void* child = GuiField<void*>(parent_bytes, GuiObjectField::first_child);
     while (CanReadGuiObject(child) && signature.visited++ < 128) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int x = origin_x + *reinterpret_cast<int*>(bytes + 0x80);
-        const int y = origin_y + *reinterpret_cast<int*>(bytes + 0x84);
-        const int width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int x = origin_x + GuiField<int>(bytes, GuiObjectField::x);
+        const int y = origin_y + GuiField<int>(bytes, GuiObjectField::y);
+        const int width = GuiField<int>(bytes, GuiObjectField::width);
+        const int height = GuiField<int>(bytes, GuiObjectField::height);
         signature.top_badge = signature.top_badge ||
             (x >= 240 && x <= 500 && y >= 0 && y <= 170 &&
              width >= 80 && width <= 280 && height >= 20 && height <= 150);
@@ -1070,7 +1070,7 @@ void ScanLoadingPageSignature(void* parent, int origin_x, int origin_y,
             (x >= -10 && x <= 120 && y >= 490 && y <= 610 &&
              width >= 560 && width <= 820 && height >= 8 && height <= 100);
         ScanLoadingPageSignature(child, x, y, depth + 1, signature);
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
 }
 
@@ -1164,9 +1164,9 @@ bool IsFullscreenLeafSurface(void* object, void* parent,
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(object);
-    const int x = *reinterpret_cast<int*>(bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(bytes + 0x84);
-    void* first_child = *reinterpret_cast<void**>(bytes + 0xF4);
+    const int x = GuiField<int>(bytes, GuiObjectField::x);
+    const int y = GuiField<int>(bytes, GuiObjectField::y);
+    void* first_child = GuiField<void*>(bytes, GuiObjectField::first_child);
     return x >= -2 && x <= 2 && y >= -2 && y <= 2 && !first_child;
 }
 
@@ -1188,14 +1188,14 @@ bool IsAwardsCeremonyOverlayRoot(void* object, void* parent,
     int badges = 0;
     int award_panels = 0;
     size_t child_count = 0;
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* child = GuiField<void*>(bytes, GuiObjectField::first_child);
     while (CanReadGuiObject(child) && child_count < 8) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(child_bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(child_bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
-        void* grandchild = *reinterpret_cast<void**>(child_bytes + 0xF4);
+        const int child_x = GuiField<int>(child_bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(child_bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
+        void* grandchild = GuiField<void*>(child_bytes, GuiObjectField::first_child);
         full_canvas_leaves += !grandchild && std::abs(child_x) <= 2 &&
             std::abs(child_y) <= 2 && child_width >= 798 &&
             child_width <= 802 && child_height >= 598 && child_height <= 602;
@@ -1209,7 +1209,7 @@ bool IsAwardsCeremonyOverlayRoot(void* object, void* parent,
             child_y >= 46 && child_y <= 50 && child_width >= 75 &&
             child_width <= 79 && child_height >= 447 && child_height <= 451;
         ++child_count;
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return child_count == 5 && full_canvas_leaves == 2 && banners == 1 &&
         badges == 1 && award_panels == 1;
@@ -1221,9 +1221,9 @@ bool IsAwardsCeremonyCurtainLayer(void* object, void* parent) {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(object);
-    const int width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
-    void* first_child = *reinterpret_cast<void**>(bytes + 0xF4);
+    const int width = GuiField<int>(bytes, GuiObjectField::width);
+    const int height = GuiField<int>(bytes, GuiObjectField::height);
+    void* first_child = GuiField<void*>(bytes, GuiObjectField::first_child);
     const bool native_canvas = width >= 798 && width <= 802 &&
         height >= 598 && height <= 602;
     const bool cover_canvas = width >= static_cast<int>(g_unified_ui.width) &&
@@ -1258,8 +1258,8 @@ void LayoutAwardsCeremonyCurtainLayer(void* object) {
         cover_width = MulDiv(cover_height, LegacyCanvas::width,
                              LegacyCanvas::height);
     }
-    *reinterpret_cast<int*>(bytes + 0x88) = cover_width;
-    *reinterpret_cast<int*>(bytes + 0x8C) = cover_height;
+    GuiField<int>(bytes, GuiObjectField::width) = cover_width;
+    GuiField<int>(bytes, GuiObjectField::height) = cover_height;
 
     const int root_x = (static_cast<int>(g_unified_ui.width) -
                         LegacyCanvas::width) / 2;
@@ -1277,8 +1277,8 @@ void LayoutAwardsCeremonyCurtainLayer(void* object) {
     // cover surface must extend beyond its centered 800x600 parent. They have
     // no descendants or hit region, so restoring the requested object-space
     // coordinates directly is both sufficient and isolated to rendering.
-    *reinterpret_cast<int*>(bytes + 0x80) = local_x;
-    *reinterpret_cast<int*>(bytes + 0x84) = local_y;
+    GuiField<int>(bytes, GuiObjectField::x) = local_x;
+    GuiField<int>(bytes, GuiObjectField::y) = local_y;
     RememberProcessedLayoutObject(object);
 }
 
@@ -1292,11 +1292,11 @@ void LayoutAwardsCeremonyOverlayRoot(void* root) {
         (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2);
 
     auto* root_bytes = static_cast<unsigned char*>(root);
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 8) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        void* next = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        void* next = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
         if (IsAwardsCeremonyCurtainLayer(child, root)) {
             LayoutAwardsCeremonyCurtainLayer(child);
         }
@@ -1310,16 +1310,16 @@ void LogAwardsCeremonyLayoutOnce(void* root) {
         return;
     }
     auto* awards_bytes = static_cast<unsigned char*>(root);
-    void* layer = *reinterpret_cast<void**>(awards_bytes + 0xF4);
+    void* layer = GuiField<void*>(awards_bytes, GuiObjectField::first_child);
     while (CanReadGuiObject(layer)) {
         if (IsAwardsCeremonyCurtainLayer(layer, root)) {
             auto* layer_bytes = static_cast<unsigned char*>(layer);
             Log("Unified UI awards curtain cover self=%p root=%p rect=%d,%d %dx%d output=%ux%u",
                 layer, root,
-                *reinterpret_cast<int*>(layer_bytes + 0x80),
-                *reinterpret_cast<int*>(layer_bytes + 0x84),
-                *reinterpret_cast<int*>(layer_bytes + 0x88),
-                *reinterpret_cast<int*>(layer_bytes + 0x8C),
+                GuiField<int>(layer_bytes, GuiObjectField::x),
+                GuiField<int>(layer_bytes, GuiObjectField::y),
+                GuiField<int>(layer_bytes, GuiObjectField::width),
+                GuiField<int>(layer_bytes, GuiObjectField::height),
                 g_unified_ui.width, g_unified_ui.height);
         }
         layer = *reinterpret_cast<void**>(
@@ -1355,13 +1355,13 @@ bool IsTitleScreenRoot(void* object, void* parent, int width, int height) {
     bool version_label = false;
     size_t direct_children = 0;
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* child = GuiField<void*>(bytes, GuiObjectField::first_child);
     while (CanReadGuiObject(child) && direct_children++ < 32) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(child_bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(child_bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int child_x = GuiField<int>(child_bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(child_bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
         menu_buttons += child_x >= 15 && child_x <= 685 &&
             (std::abs(child_y - 35) <= 2 || std::abs(child_y - 135) <= 2) &&
             child_width >= 98 && child_width <= 102 &&
@@ -1381,7 +1381,7 @@ bool IsTitleScreenRoot(void* object, void* parent, int width, int height) {
             child_y >= 165 && child_y <= 181 &&
             child_width >= 798 && child_width <= 802 &&
             child_height >= 305 && child_height <= 315;
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
 
     return menu_buttons == 7 && version_label &&
@@ -1402,14 +1402,14 @@ bool IsPhotoAlbumRoot(void* object, void* parent, int width, int height) {
     bool book_page = false;
     bool exit_button = false;
     auto* bytes = static_cast<unsigned char*>(object);
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* child = GuiField<void*>(bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 32) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int x = *reinterpret_cast<int*>(child_bytes + 0x80);
-        const int y = *reinterpret_cast<int*>(child_bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int x = GuiField<int>(child_bytes, GuiObjectField::x);
+        const int y = GuiField<int>(child_bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
         filmstrip |= x >= -2 && x <= 2 && y >= 504 && y <= 512 &&
             child_width >= 798 && child_width <= 802 &&
             child_height >= 88 && child_height <= 96;
@@ -1419,7 +1419,7 @@ bool IsPhotoAlbumRoot(void* object, void* parent, int width, int height) {
         exit_button |= x >= 685 && x <= 695 && y >= 550 && y <= 560 &&
             child_width >= 88 && child_width <= 96 &&
             child_height >= 28 && child_height <= 36;
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return filmstrip && book_page && exit_button;
 }
@@ -1436,25 +1436,25 @@ bool IsInGameCGRoot(void* object, void* parent, int width, int height) {
     // Cache this structurally unique page even while hidden. Visibility is
     // checked separately every frame, so the first CG can activate without
     // waiting for another discovery cycle.
-    void* first = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* first = GuiField<void*>(bytes, GuiObjectField::first_child);
     if (!CanReadGuiObject(first)) {
         return false;
     }
     auto* first_bytes = static_cast<unsigned char*>(first);
-    void* second = *reinterpret_cast<void**>(first_bytes + 0xF8);
+    void* second = GuiField<void*>(first_bytes, GuiObjectField::next_sibling);
     if (!CanReadGuiObject(second)) {
         return false;
     }
     auto* second_bytes = static_cast<unsigned char*>(second);
-    if (*reinterpret_cast<void**>(second_bytes + 0xF8) != nullptr) {
+    if (GuiField<void*>(second_bytes, GuiObjectField::next_sibling) != nullptr) {
         return false;
     }
     for (auto* child_bytes : {first_bytes, second_bytes}) {
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
         if (child_width < 798 || child_width > 802 ||
             child_height < 598 || child_height > 602 ||
-            *reinterpret_cast<void**>(child_bytes + 0xF4) != nullptr) {
+            GuiField<void*>(child_bytes, GuiObjectField::first_child) != nullptr) {
             return false;
         }
     }
@@ -1473,19 +1473,19 @@ bool IsInGameCGCaption(void* object, void* parent, int width, int height) {
     if (*(bytes + 0x99) == 0) {
         return false;
     }
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* child = GuiField<void*>(bytes, GuiObjectField::first_child);
     if (!CanReadGuiObject(child)) {
         return false;
     }
     auto* child_bytes = static_cast<unsigned char*>(child);
-    const int child_x = *reinterpret_cast<int*>(child_bytes + 0x80);
-    const int child_y = *reinterpret_cast<int*>(child_bytes + 0x84);
-    const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-    const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+    const int child_x = GuiField<int>(child_bytes, GuiObjectField::x);
+    const int child_y = GuiField<int>(child_bytes, GuiObjectField::y);
+    const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+    const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
     return child_x >= 0 && child_x <= 20 && child_y >= 0 && child_y <= 20 &&
         child_width >= 760 && child_width <= 790 &&
         child_height >= 50 && child_height <= 70 &&
-        *reinterpret_cast<void**>(child_bytes + 0xF8) == nullptr;
+        GuiField<void*>(child_bytes, GuiObjectField::next_sibling) == nullptr;
 }
 
 bool IsInGameCGItemNotice(void* object, void* parent,
@@ -1502,25 +1502,25 @@ bool IsInGameCGItemNotice(void* object, void* parent,
     if (*(bytes + 0x99) == 0) {
         return false;
     }
-    void* first = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* first = GuiField<void*>(bytes, GuiObjectField::first_child);
     if (!CanReadGuiObject(first)) {
         return false;
     }
     auto* first_bytes = static_cast<unsigned char*>(first);
-    void* second = *reinterpret_cast<void**>(first_bytes + 0xF8);
+    void* second = GuiField<void*>(first_bytes, GuiObjectField::next_sibling);
     if (!CanReadGuiObject(second)) {
         return false;
     }
     auto* second_bytes = static_cast<unsigned char*>(second);
-    const int first_width = *reinterpret_cast<int*>(first_bytes + 0x88);
-    const int first_height = *reinterpret_cast<int*>(first_bytes + 0x8C);
-    const int second_width = *reinterpret_cast<int*>(second_bytes + 0x88);
-    const int second_height = *reinterpret_cast<int*>(second_bytes + 0x8C);
+    const int first_width = GuiField<int>(first_bytes, GuiObjectField::width);
+    const int first_height = GuiField<int>(first_bytes, GuiObjectField::height);
+    const int second_width = GuiField<int>(second_bytes, GuiObjectField::width);
+    const int second_height = GuiField<int>(second_bytes, GuiObjectField::height);
     return first_width >= 370 && first_width <= 390 &&
         first_height >= 55 && first_height <= 65 &&
         second_width >= 190 && second_width <= 210 &&
         second_height >= 130 && second_height <= 150 &&
-        *reinterpret_cast<void**>(second_bytes + 0xF8) == nullptr;
+        GuiField<void*>(second_bytes, GuiObjectField::next_sibling) == nullptr;
 }
 
 bool IsInGameCGVisible() {
@@ -1572,7 +1572,7 @@ bool IsInGameCGNativeRootStrip(void* object, void* parent,
     if (*(bytes + 0x99) == 0) {
         return false;
     }
-    return CanReadGuiObject(*reinterpret_cast<void**>(bytes + 0xF4));
+    return CanReadGuiObject(GuiField<void*>(bytes, GuiObjectField::first_child));
 }
 
 UnifiedUILayoutState::InGameCGNativeOverlay*
@@ -1625,10 +1625,10 @@ void* DiscoverInGameCGSurfaces(void* root, void* start_child = nullptr,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < maximum_nodes) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int x = GuiField<int>(bytes, GuiObjectField::x);
+        const int y = GuiField<int>(bytes, GuiObjectField::y);
+        const int width = GuiField<int>(bytes, GuiObjectField::width);
+        const int height = GuiField<int>(bytes, GuiObjectField::height);
         if (IsInGameCGRoot(child, root, width, height)) {
             visible_cg = child;
         } else if (IsInGameCGCaption(child, root, width, height)) {
@@ -1642,7 +1642,7 @@ void* DiscoverInGameCGSurfaces(void* root, void* start_child = nullptr,
                    IsInGameCGNativeRootStrip(child, root, width, height)) {
             RegisterInGameCGNativeOverlay(child, x, y, width, height);
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     if (visible_cg) {
         g_unified_ui.in_game_cg_root = visible_cg;
@@ -1689,18 +1689,18 @@ void LayoutInGameCGRoot(void* object) {
         AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                               static_cast<int>(g_unified_ui.height));
     auto* bytes = static_cast<unsigned char*>(object);
-    *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-    *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+    GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+    GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
     original(object, viewport_x, viewport_y);
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* child = GuiField<void*>(bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 2) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        *reinterpret_cast<int*>(child_bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(child_bytes + 0x8C) = viewport_height;
+        GuiField<int>(child_bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(child_bytes, GuiObjectField::height) = viewport_height;
         original(child, 0, 0);
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
 }
 
@@ -1727,11 +1727,11 @@ bool GetLoadingScreenRect(RECT& rect) {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_loading_page_root);
-    void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
-    const int x = *reinterpret_cast<int*>(bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(bytes + 0x84);
-    const int width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+    void* parent = GuiField<void*>(bytes, GuiObjectField::parent);
+    const int x = GuiField<int>(bytes, GuiObjectField::x);
+    const int y = GuiField<int>(bytes, GuiObjectField::y);
+    const int width = GuiField<int>(bytes, GuiObjectField::width);
+    const int height = GuiField<int>(bytes, GuiObjectField::height);
     if (parent != g_unified_ui.primary_root || *(bytes + 0x99) == 0 ||
         width < 798 || width > 804 || height < 598 || height > 604) {
         return false;
@@ -1799,10 +1799,10 @@ TitleNativeGeometry* RememberTitleNativeGeometry(void* object) {
     TitleNativeGeometry& geometry =
         g_title_native_geometry[g_title_native_geometry_count++];
     geometry.object = object;
-    geometry.x = *reinterpret_cast<int*>(bytes + 0x80);
-    geometry.y = *reinterpret_cast<int*>(bytes + 0x84);
-    geometry.width = *reinterpret_cast<int*>(bytes + 0x88);
-    geometry.height = *reinterpret_cast<int*>(bytes + 0x8C);
+    geometry.x = GuiField<int>(bytes, GuiObjectField::x);
+    geometry.y = GuiField<int>(bytes, GuiObjectField::y);
+    geometry.width = GuiField<int>(bytes, GuiObjectField::width);
+    geometry.height = GuiField<int>(bytes, GuiObjectField::height);
     return &geometry;
 }
 
@@ -1915,8 +1915,8 @@ void ScaleTitleScreenSubtree(void* object, int depth = 0) {
         }
         auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
         auto* bytes = static_cast<unsigned char*>(object);
-        int& width = *reinterpret_cast<int*>(bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        int& width = GuiField<int>(bytes, GuiObjectField::width);
+        int& height = GuiField<int>(bytes, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
@@ -2230,13 +2230,13 @@ void CorrectArtistRadarVertices() {
     auto* root_bytes = static_cast<unsigned char*>(g_artist_profile_root);
     auto* card_bytes = static_cast<unsigned char*>(profile_card);
     const float root_x = static_cast<float>(
-        *reinterpret_cast<int*>(root_bytes + 0x80));
+        GuiField<int>(root_bytes, GuiObjectField::x));
     const float root_y = static_cast<float>(
-        *reinterpret_cast<int*>(root_bytes + 0x84));
+        GuiField<int>(root_bytes, GuiObjectField::y));
     const float card_x = static_cast<float>(
-        *reinterpret_cast<int*>(card_bytes + 0x80));
+        GuiField<int>(card_bytes, GuiObjectField::x));
     const float card_y = static_cast<float>(
-        *reinterpret_cast<int*>(card_bytes + 0x84));
+        GuiField<int>(card_bytes, GuiObjectField::y));
 
     HMODULE executable = GetModuleHandleW(nullptr);
     if (!executable) {
@@ -2964,13 +2964,13 @@ void RestoreTitleTutorialDropdown(
             continue;
         }
         auto* bytes = static_cast<unsigned char*>(native.object);
-        *reinterpret_cast<int*>(bytes + 0x88) = native.width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = native.height;
+        GuiField<int>(bytes, GuiObjectField::width) = native.width;
+        GuiField<int>(bytes, GuiObjectField::height) = native.height;
         original(native.object, native.x, native.y);
     }
     auto* root_bytes = static_cast<unsigned char*>(layout.root);
-    *reinterpret_cast<int*>(root_bytes + 0x88) = layout.native_width;
-    *reinterpret_cast<int*>(root_bytes + 0x8C) = layout.native_height;
+    GuiField<int>(root_bytes, GuiObjectField::width) = layout.native_width;
+    GuiField<int>(root_bytes, GuiObjectField::height) = layout.native_height;
     original(layout.root,
         native_x + (static_cast<int>(g_unified_ui.width) -
             LegacyCanvas::width) / 2,
@@ -2991,8 +2991,8 @@ void ScaleStudioEventDropdownSubtree(void* object,
         }
         auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
         auto* bytes = static_cast<unsigned char*>(object);
-        int& width = *reinterpret_cast<int*>(bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        int& width = GuiField<int>(bytes, GuiObjectField::width);
+        int& height = GuiField<int>(bytes, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
@@ -3102,10 +3102,10 @@ bool IsTrainingActivityPage(void* object, void* parent,
         static_cast<unsigned char*>(object) + 0xF4);
     while (CanReadGuiObject(child) && visited++ < 8) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int child_y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int child_x = GuiField<int>(bytes, GuiObjectField::x);
+        const int child_y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
         if ((native_page && child_x >= 198 && child_x <= 202 &&
              child_y >= 173 && child_y <= 177 &&
              child_width >= 398 && child_width <= 402 &&
@@ -3117,7 +3117,7 @@ bool IsTrainingActivityPage(void* object, void* parent,
              std::abs(child_height - MulDiv(300, viewport_height, LegacyCanvas::height)) <= 2)) {
             ++playfields;
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return playfields == 1;
 }
@@ -3129,8 +3129,8 @@ void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
         }
         auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
         auto* bytes = static_cast<unsigned char*>(object);
-        int& width = *reinterpret_cast<int*>(bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        int& width = GuiField<int>(bytes, GuiObjectField::width);
+        int& height = GuiField<int>(bytes, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
@@ -3206,8 +3206,8 @@ void ScaleTitleTutorialBubbleSubtree(void* object, int depth = 0) {
         }
         auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
         auto* bytes = static_cast<unsigned char*>(object);
-        int& width = *reinterpret_cast<int*>(bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        int& width = GuiField<int>(bytes, GuiObjectField::width);
+        int& height = GuiField<int>(bytes, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
@@ -3270,8 +3270,8 @@ size_t DetectAnnouncementArtistCount(void* root) {
         static_cast<unsigned char*>(root) + 0xF4);
     while (CanReadGuiObject(child) && visited++ < 32) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int width = GuiField<int>(bytes, GuiObjectField::width);
+        const int height = GuiField<int>(bytes, GuiObjectField::height);
         const bool result_card =
             (width >= 95 && width <= 105 &&
              height >= 115 && height <= 125) ||
@@ -3282,7 +3282,7 @@ size_t DetectAnnouncementArtistCount(void* root) {
         if (result_card && *(bytes + 0x99) != 0) {
             ++visible_result_cards;
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return std::min<size_t>(visible_result_cards, 4);
 }
@@ -3322,8 +3322,8 @@ void ScaleAnnouncementSubtree(void* object, int depth = 0) {
         }
         auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
         auto* bytes = static_cast<unsigned char*>(object);
-        int& width = *reinterpret_cast<int*>(bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        int& width = GuiField<int>(bytes, GuiObjectField::width);
+        int& height = GuiField<int>(bytes, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
@@ -3382,15 +3382,15 @@ bool IsPhotoAlbumCGVisible() {
     }
     auto* root_bytes =
         static_cast<unsigned char*>(g_unified_ui.photo_album_root);
-    void* canvas = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* canvas = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     if (!CanReadGuiObject(canvas)) {
         return false;
     }
     auto* canvas_bytes = static_cast<unsigned char*>(canvas);
-    const int x = *reinterpret_cast<int*>(canvas_bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(canvas_bytes + 0x84);
-    const int width = *reinterpret_cast<int*>(canvas_bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(canvas_bytes + 0x8C);
+    const int x = GuiField<int>(canvas_bytes, GuiObjectField::x);
+    const int y = GuiField<int>(canvas_bytes, GuiObjectField::y);
+    const int width = GuiField<int>(canvas_bytes, GuiObjectField::width);
+    const int height = GuiField<int>(canvas_bytes, GuiObjectField::height);
     const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
         AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                               static_cast<int>(g_unified_ui.height));
@@ -3509,10 +3509,10 @@ void ScalePhotoAlbumSubtree(void* object, int depth = 0) {
         }
         auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
         auto* bytes = static_cast<unsigned char*>(object);
-        int& x = *reinterpret_cast<int*>(bytes + 0x80);
-        int& y = *reinterpret_cast<int*>(bytes + 0x84);
-        int& width = *reinterpret_cast<int*>(bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        int& x = GuiField<int>(bytes, GuiObjectField::x);
+        int& y = GuiField<int>(bytes, GuiObjectField::y);
+        int& width = GuiField<int>(bytes, GuiObjectField::width);
+        int& height = GuiField<int>(bytes, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
@@ -3713,8 +3713,8 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
         bytes + 0xF4);
     while (CanReadGuiObject(child) && count < 20) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
         // A pooled announcement root can be restored to 800x600 before the
         // game restores all of its children. Accept either coordinate space
         // independently so the retained native-geometry cache can repair that
@@ -3738,7 +3738,7 @@ bool IsAnnouncementControlRoot(void* object, void* parent,
             ++result_cards;
         }
         ++count;
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return child == nullptr && captions == 4 && result_cards == 4;
 }
@@ -3748,7 +3748,7 @@ bool IsCachedAnnouncementRootValid() {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_announcement_root);
-    if (*reinterpret_cast<void**>(bytes + 0xF0) !=
+    if (GuiField<void*>(bytes, GuiObjectField::parent) !=
             g_unified_ui.primary_root) {
         return false;
     }
@@ -3756,8 +3756,8 @@ bool IsCachedAnnouncementRootValid() {
     const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
         AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                               static_cast<int>(g_unified_ui.height));
-    const int width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+    const int width = GuiField<int>(bytes, GuiObjectField::width);
+    const int height = GuiField<int>(bytes, GuiObjectField::height);
     const bool native_canvas = width >= 790 && width <= 810 &&
         height >= 590 && height <= 610;
     const bool scaled_canvas = std::abs(width - viewport_width) <= 2 &&
@@ -3769,11 +3769,11 @@ bool IsCachedAnnouncementRootValid() {
     size_t captions = 0;
     size_t result_cards = 0;
     size_t count = 0;
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
+    void* child = GuiField<void*>(bytes, GuiObjectField::first_child);
     while (CanReadGuiObject(child) && count < 20) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int child_width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int child_width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(child_bytes, GuiObjectField::height);
         if ((child_width >= 140 && child_width <= 150 &&
              child_height >= 18 && child_height <= 22) ||
             (std::abs(child_width - MulDiv(145, viewport_width, LegacyCanvas::width)) <= 2 &&
@@ -3790,7 +3790,7 @@ bool IsCachedAnnouncementRootValid() {
             ++result_cards;
         }
         ++count;
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return child == nullptr && captions == 4 && result_cards == 4;
 }
@@ -3812,19 +3812,19 @@ void* FindAnnouncementRoot(void* start_child, size_t maximum_nodes,
     }
     auto* root_bytes = static_cast<unsigned char*>(g_unified_ui.primary_root);
     void* child = start_child ? start_child :
-        *reinterpret_cast<void**>(root_bytes + 0xF4);
+        GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < maximum_nodes) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        const int width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        const int width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int height = GuiField<int>(child_bytes, GuiObjectField::height);
         if (IsAnnouncementControlRoot(child, g_unified_ui.primary_root,
                                       width, height)) {
             ResetAnnouncementGeometry(child);
             found = true;
             return nullptr;
         }
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return visited >= maximum_nodes && CanReadGuiObject(child) ?
         child : nullptr;
@@ -3891,7 +3891,7 @@ bool IsTrainingScreenPillarboxNeeded() {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_training_minigame_root);
-    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+    return GuiField<void*>(bytes, GuiObjectField::parent) ==
         g_unified_ui.primary_root;
 }
 
@@ -3900,7 +3900,7 @@ bool IsStudioEventListScreenVisible() {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_studio_event_list_root);
-    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+    return GuiField<void*>(bytes, GuiObjectField::parent) ==
             g_unified_ui.primary_root && *(bytes + 0x99) != 0;
 }
 
@@ -3909,7 +3909,7 @@ bool IsAirportSelectionScreenVisible() {
         return false;
     }
     auto* bytes = static_cast<unsigned char*>(g_airport_selection_root);
-    return *reinterpret_cast<void**>(bytes + 0xF0) ==
+    return GuiField<void*>(bytes, GuiObjectField::parent) ==
             g_unified_ui.primary_root && *(bytes + 0x99) != 0;
 }
 
@@ -3945,9 +3945,9 @@ void* FindPhoneOverlayButton(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 6) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
-        void* next = *reinterpret_cast<void**>(bytes + 0xF8);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
+        void* next = GuiField<void*>(bytes, GuiObjectField::next_sibling);
         talk |= child_width == 605 && child_height == 178;
         confirmation |= child_width == 338 && child_height == 143;
         question |= child_width == 480 && child_height == 380;
@@ -3979,12 +3979,12 @@ bool IsCachedPhoneOverlayValid() {
     }
     auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
     auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
-    return *reinterpret_cast<void**>(root_bytes + 0xF0) ==
+    return GuiField<void*>(root_bytes, GuiObjectField::parent) ==
             g_unified_ui.primary_root &&
-        *reinterpret_cast<void**>(button_bytes + 0xF0) ==
+        GuiField<void*>(button_bytes, GuiObjectField::parent) ==
             g_phone_overlay_root &&
-        *reinterpret_cast<int*>(button_bytes + 0x88) == 40 &&
-        *reinterpret_cast<int*>(button_bytes + 0x8C) == 40;
+        GuiField<int>(button_bytes, GuiObjectField::width) == 40 &&
+        GuiField<int>(button_bytes, GuiObjectField::height) == 40;
 }
 
 void DiscoverPhoneOverlay(ULONGLONG now) {
@@ -4005,13 +4005,13 @@ void DiscoverPhoneOverlay(ULONGLONG now) {
 
     auto* primary_bytes =
         static_cast<unsigned char*>(g_unified_ui.primary_root);
-    void* child = *reinterpret_cast<void**>(primary_bytes + 0xF4);
+    void* child = GuiField<void*>(primary_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 4096) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        void* next = *reinterpret_cast<void**>(child_bytes + 0xF8);
-        const int width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        void* next = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
+        const int width = GuiField<int>(child_bytes, GuiObjectField::width);
+        const int height = GuiField<int>(child_bytes, GuiObjectField::height);
         if (void* phone_button = FindPhoneOverlayButton(
                 child, g_unified_ui.primary_root, width, height)) {
             RememberPhoneOverlay(child, phone_button);
@@ -4029,9 +4029,9 @@ bool IsPhoneOverlayRinging() {
     }
     auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
     auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
-    if (*reinterpret_cast<void**>(root_bytes + 0xF0) !=
+    if (GuiField<void*>(root_bytes, GuiObjectField::parent) !=
             g_unified_ui.primary_root ||
-        *reinterpret_cast<void**>(button_bytes + 0xF0) !=
+        GuiField<void*>(button_bytes, GuiObjectField::parent) !=
             g_phone_overlay_root ||
         *(button_bytes + 0x99) == 0) {
         return false;
@@ -4046,14 +4046,14 @@ bool IsPhoneOverlayRinging() {
     // The ringing phase exposes only BtnPhone. Once the player answers, one
     // of the dialogue/question panels becomes visible and the controller is
     // intentionally allowed to park the button off-screen again.
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 6) {
         auto* child_bytes = static_cast<unsigned char*>(child);
         if (child != g_phone_overlay_button && *(child_bytes + 0x99) != 0) {
             return false;
         }
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return child == nullptr;
 }
@@ -4073,14 +4073,14 @@ bool IsPhoneOverlayDialogueVisible() {
     if (*(root_bytes + 0x99) == 0) {
         return false;
     }
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 6) {
         auto* child_bytes = static_cast<unsigned char*>(child);
         if (child != g_phone_overlay_button && *(child_bytes + 0x99) != 0) {
             return true;
         }
-        child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+        child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
     }
     return false;
 }
@@ -4112,11 +4112,11 @@ void LogPhoneOverlayStateIfChanged() {
     if (current.valid) {
         auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
         auto* button_bytes = static_cast<unsigned char*>(g_phone_overlay_button);
-        current.x = *reinterpret_cast<int*>(button_bytes + 0x80);
-        current.y = *reinterpret_cast<int*>(button_bytes + 0x84);
+        current.x = GuiField<int>(button_bytes, GuiObjectField::x);
+        current.y = GuiField<int>(button_bytes, GuiObjectField::y);
         current.root_visible = *(root_bytes + 0x99);
         current.button_visible = *(button_bytes + 0x99);
-        void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+        void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
         size_t index = 0;
         while (CanReadGuiObject(child) && index < 5) {
             auto* child_bytes = static_cast<unsigned char*>(child);
@@ -4124,7 +4124,7 @@ void LogPhoneOverlayStateIfChanged() {
                 *(child_bytes + 0x99) != 0) {
                 current.sibling_visible_mask |= 1u << index;
             }
-            child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+            child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
             ++index;
         }
     }
@@ -4150,7 +4150,7 @@ void LogPhoneOverlayStateIfChanged() {
             (!initialized || current.sibling_visible_mask !=
                 previous.sibling_visible_mask)) {
             auto* root_bytes = static_cast<unsigned char*>(g_phone_overlay_root);
-            void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+            void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
             size_t index = 0;
             while (CanReadGuiObject(child) && index < 5) {
                 auto* child_bytes = static_cast<unsigned char*>(child);
@@ -4158,11 +4158,11 @@ void LogPhoneOverlayStateIfChanged() {
                     "rect=%d,%d %dx%d",
                     index, child, child == g_phone_overlay_button ? 1 : 0,
                     static_cast<unsigned int>(*(child_bytes + 0x99)),
-                    *reinterpret_cast<int*>(child_bytes + 0x80),
-                    *reinterpret_cast<int*>(child_bytes + 0x84),
-                    *reinterpret_cast<int*>(child_bytes + 0x88),
-                    *reinterpret_cast<int*>(child_bytes + 0x8C));
-                child = *reinterpret_cast<void**>(child_bytes + 0xF8);
+                    GuiField<int>(child_bytes, GuiObjectField::x),
+                    GuiField<int>(child_bytes, GuiObjectField::y),
+                    GuiField<int>(child_bytes, GuiObjectField::width),
+                    GuiField<int>(child_bytes, GuiObjectField::height));
+                child = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
                 ++index;
             }
         }
@@ -4208,28 +4208,28 @@ void RefreshPhoneOverlayDialoguePanels(const char* phase) {
     }
 
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 6) {
         auto* bytes = static_cast<unsigned char*>(child);
-        void* next = *reinterpret_cast<void**>(bytes + 0xF8);
+        void* next = GuiField<void*>(bytes, GuiObjectField::next_sibling);
         if (child != g_phone_overlay_button && *(bytes + 0x99) != 0) {
-            const int width = *reinterpret_cast<int*>(bytes + 0x88);
-            const int height = *reinterpret_cast<int*>(bytes + 0x8C);
-            const int old_x = *reinterpret_cast<int*>(bytes + 0x80);
-            const int old_y = *reinterpret_cast<int*>(bytes + 0x84);
+            const int width = GuiField<int>(bytes, GuiObjectField::width);
+            const int height = GuiField<int>(bytes, GuiObjectField::height);
+            const int old_x = GuiField<int>(bytes, GuiObjectField::x);
+            const int old_y = GuiField<int>(bytes, GuiObjectField::y);
             const bool parked = old_x + width <= 0 || old_y + height <= 0;
             int target_x = 0;
             int target_y = 0;
             if (parked && GetPhoneOverlayDialoguePanelPosition(
                     width, height, target_x, target_y)) {
                 original(child, target_x, target_y);
-                const int moved_x = *reinterpret_cast<int*>(bytes + 0x80);
-                const int moved_y = *reinterpret_cast<int*>(bytes + 0x84);
+                const int moved_x = GuiField<int>(bytes, GuiObjectField::x);
+                const int moved_y = GuiField<int>(bytes, GuiObjectField::y);
                 const bool rejected = moved_x != target_x || moved_y != target_y;
                 if (rejected) {
-                    *reinterpret_cast<int*>(bytes + 0x80) = target_x;
-                    *reinterpret_cast<int*>(bytes + 0x84) = target_y;
+                    GuiField<int>(bytes, GuiObjectField::x) = target_x;
+                    GuiField<int>(bytes, GuiObjectField::y) = target_y;
                 }
                 if (IsDebugModeEnabled()) {
                     Log("Phone overlay dialogue refresh phase=%s self=%p "
@@ -4237,8 +4237,8 @@ void RefreshPhoneOverlayDialoguePanels(const char* phase) {
                         "final=%d,%d",
                         phase, child, old_x, old_y, width, height,
                         target_x, target_y, rejected ? 1 : 0,
-                        *reinterpret_cast<int*>(bytes + 0x80),
-                        *reinterpret_cast<int*>(bytes + 0x84));
+                        GuiField<int>(bytes, GuiObjectField::x),
+                        GuiField<int>(bytes, GuiObjectField::y));
                 }
                 RememberProcessedLayoutObject(child);
             }
@@ -4260,8 +4260,8 @@ void RefreshPhoneOverlayButton(const char* phase) {
                 Log("Phone overlay refresh phase=%s skipped trampoline=%p "
                     "ringing=%d pos=%d,%d",
                     phase, g_unified_ui.trampoline, ringing ? 1 : 0,
-                    *reinterpret_cast<int*>(button_bytes + 0x80),
-                    *reinterpret_cast<int*>(button_bytes + 0x84));
+                    GuiField<int>(button_bytes, GuiObjectField::x),
+                    GuiField<int>(button_bytes, GuiObjectField::y));
                 skip_logged = true;
             }
         }
@@ -4272,15 +4272,15 @@ void RefreshPhoneOverlayButton(const char* phase) {
     int target_x = 0;
     int target_y = 0;
     GetPhoneOverlayButtonPosition(target_x, target_y);
-    const int x = *reinterpret_cast<int*>(button_bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    const int x = GuiField<int>(button_bytes, GuiObjectField::x);
+    const int y = GuiField<int>(button_bytes, GuiObjectField::y);
     if (x == target_x && y == target_y) {
         return;
     }
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     original(g_phone_overlay_button, target_x, target_y);
-    int after_x = *reinterpret_cast<int*>(button_bytes + 0x80);
-    int after_y = *reinterpret_cast<int*>(button_bytes + 0x84);
+    int after_x = GuiField<int>(button_bytes, GuiObjectField::x);
+    int after_y = GuiField<int>(button_bytes, GuiObjectField::y);
     const bool move_rejected = after_x != target_x || after_y != target_y;
     if (move_rejected) {
         // BtnPhone is retained under BababaCallOut's zero-sized structural
@@ -4289,8 +4289,8 @@ void RefreshPhoneOverlayButton(const char* phase) {
         // coordinates. Its renderer consumes these canonical position fields,
         // so preserve the base call and only fall back when it demonstrably
         // rejected the requested move.
-        *reinterpret_cast<int*>(button_bytes + 0x80) = target_x;
-        *reinterpret_cast<int*>(button_bytes + 0x84) = target_y;
+        GuiField<int>(button_bytes, GuiObjectField::x) = target_x;
+        GuiField<int>(button_bytes, GuiObjectField::y) = target_y;
         after_x = target_x;
         after_y = target_y;
     }
@@ -4331,17 +4331,17 @@ int CountVisibleToolbarSlots(void* object, void* parent,
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 16) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int child_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int child_height = *reinterpret_cast<int*>(bytes + 0x8C);
-        const bool visible = *reinterpret_cast<unsigned char*>(bytes + 0x99) != 0;
+        const int x = GuiField<int>(bytes, GuiObjectField::x);
+        const int y = GuiField<int>(bytes, GuiObjectField::y);
+        const int child_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int child_height = GuiField<int>(bytes, GuiObjectField::height);
+        const bool visible = GuiField<unsigned char>(bytes, GuiObjectField::visible) != 0;
         if (visible && x >= 0 && x <= 320 && y >= 0 && y <= 10 &&
             child_width >= 35 && child_width <= 42 &&
             child_height >= 35 && child_height <= 42) {
             ++visible_count;
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     return visible_count;
 }
@@ -4363,17 +4363,17 @@ void NormalizeVisibleToolbarSlots(void* object, int expected_slots) {
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 16) {
         auto* bytes = static_cast<unsigned char*>(child);
-        const int x = *reinterpret_cast<int*>(bytes + 0x80);
-        const int y = *reinterpret_cast<int*>(bytes + 0x84);
-        const int width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int x = GuiField<int>(bytes, GuiObjectField::x);
+        const int y = GuiField<int>(bytes, GuiObjectField::y);
+        const int width = GuiField<int>(bytes, GuiObjectField::width);
+        const int height = GuiField<int>(bytes, GuiObjectField::height);
         const bool visible = *(bytes + 0x99) != 0;
         if (visible && x >= 0 && x <= 320 && y >= 0 && y <= 10 &&
             width >= 35 && width <= 42 &&
             height >= 35 && height <= 42 && slot_count < std::size(slots)) {
             slots[slot_count++] = {child, x, y};
         }
-        child = *reinterpret_cast<void**>(bytes + 0xF8);
+        child = GuiField<void*>(bytes, GuiObjectField::next_sibling);
     }
     if (slot_count != static_cast<size_t>(expected_slots)) {
         return;
@@ -4409,8 +4409,8 @@ void ResizeToolbarBackground(void* object, int width, int height) {
         return;
     }
     auto* bytes = static_cast<unsigned char*>(object);
-    const int current_width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int current_height = *reinterpret_cast<int*>(bytes + 0x8C);
+    const int current_width = GuiField<int>(bytes, GuiObjectField::width);
+    const int current_height = GuiField<int>(bytes, GuiObjectField::height);
     if (current_width == width && current_height == height) {
         return;
     }
@@ -4420,8 +4420,8 @@ void ResizeToolbarBackground(void* object, int width, int height) {
         // but leaves the seven-slot background mesh unchanged.
         g_gui_resize(object, width, height);
     } else {
-        *reinterpret_cast<int*>(bytes + 0x88) = width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = height;
+        GuiField<int>(bytes, GuiObjectField::width) = width;
+        GuiField<int>(bytes, GuiObjectField::height) = height;
     }
 }
 
@@ -4437,9 +4437,9 @@ void RefreshToolbarSlots(ULONGLONG now) {
     g_toolbar_last_slot_refresh_tick = now;
 
     auto* bytes = static_cast<unsigned char*>(g_toolbar_root);
-    void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
-    const int width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+    void* parent = GuiField<void*>(bytes, GuiObjectField::parent);
+    const int width = GuiField<int>(bytes, GuiObjectField::width);
+    const int height = GuiField<int>(bytes, GuiObjectField::height);
     if (parent != g_unified_ui.primary_root || height < 40 || height > 50) {
         g_toolbar_root = nullptr;
         return;
@@ -4469,11 +4469,11 @@ bool GetToolbarBackgroundRenderRect(RECT& rect,
     }
 
     auto* bytes = static_cast<unsigned char*>(g_toolbar_root);
-    const int x = *reinterpret_cast<int*>(bytes + 0x80);
-    const int y = *reinterpret_cast<int*>(bytes + 0x84);
-    const int width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int height = *reinterpret_cast<int*>(bytes + 0x8C);
-    if (*reinterpret_cast<void**>(bytes + 0xF0) !=
+    const int x = GuiField<int>(bytes, GuiObjectField::x);
+    const int y = GuiField<int>(bytes, GuiObjectField::y);
+    const int width = GuiField<int>(bytes, GuiObjectField::width);
+    const int height = GuiField<int>(bytes, GuiObjectField::height);
+    if (GuiField<void*>(bytes, GuiObjectField::parent) !=
             g_unified_ui.primary_root ||
         *(bytes + 0x99) == 0 || width != g_unified_ui.toolbar_width ||
         height < 40 || height > 50 ||
@@ -4942,15 +4942,15 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
     }
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     auto* root_bytes = static_cast<unsigned char*>(root);
-    void* child = *reinterpret_cast<void**>(root_bytes + 0xF4);
+    void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 4096) {
         auto* child_bytes = static_cast<unsigned char*>(child);
-        void* next = *reinterpret_cast<void**>(child_bytes + 0xF8);
-        int& x = *reinterpret_cast<int*>(child_bytes + 0x80);
-        int& y = *reinterpret_cast<int*>(child_bytes + 0x84);
-        int& width = *reinterpret_cast<int*>(child_bytes + 0x88);
-        int& height = *reinterpret_cast<int*>(child_bytes + 0x8C);
+        void* next = GuiField<void*>(child_bytes, GuiObjectField::next_sibling);
+        int& x = GuiField<int>(child_bytes, GuiObjectField::x);
+        int& y = GuiField<int>(child_bytes, GuiObjectField::y);
+        int& width = GuiField<int>(child_bytes, GuiObjectField::width);
+        int& height = GuiField<int>(child_bytes, GuiObjectField::height);
         if (IsLoadingPageRoot(child, root, width, height) &&
             g_loading_page_root != child) {
             g_loading_page_root = child;
@@ -5082,7 +5082,7 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             }
         } else if (legacy_canvas) {
             size_t child_count = 0;
-            void* only_child = *reinterpret_cast<void**>(child_bytes + 0xF4);
+            void* only_child = GuiField<void*>(child_bytes, GuiObjectField::first_child);
             void* cursor = only_child;
             while (CanReadGuiObject(cursor) && child_count < 3) {
                 ++child_count;
@@ -5095,10 +5095,10 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             }
 
             auto* only_bytes = static_cast<unsigned char*>(only_child);
-            const int only_x = *reinterpret_cast<int*>(only_bytes + 0x80);
-            const int only_y = *reinterpret_cast<int*>(only_bytes + 0x84);
-            const int only_width = *reinterpret_cast<int*>(only_bytes + 0x88);
-            const int only_height = *reinterpret_cast<int*>(only_bytes + 0x8C);
+            const int only_x = GuiField<int>(only_bytes, GuiObjectField::x);
+            const int only_y = GuiField<int>(only_bytes, GuiObjectField::y);
+            const int only_width = GuiField<int>(only_bytes, GuiObjectField::width);
+            const int only_height = GuiField<int>(only_bytes, GuiObjectField::height);
             const bool small_single_overlay = child_count == 1 &&
                 only_width >= 0 && only_width < 400 &&
                 only_height >= 0 && only_height < 400;
@@ -5378,9 +5378,9 @@ void RefreshInGameCGOverlays(bool discover_surfaces) {
         }
         auto* caption_bytes = static_cast<unsigned char*>(
             g_unified_ui.in_game_cg_caption);
-        void* parent = *reinterpret_cast<void**>(caption_bytes + 0xF0);
-        const int width = *reinterpret_cast<int*>(caption_bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(caption_bytes + 0x8C);
+        void* parent = GuiField<void*>(caption_bytes, GuiObjectField::parent);
+        const int width = GuiField<int>(caption_bytes, GuiObjectField::width);
+        const int height = GuiField<int>(caption_bytes, GuiObjectField::height);
         if (*(caption_bytes + 0x99) == 0 ||
             !IsInGameCGCaption(g_unified_ui.in_game_cg_caption,
                 parent, width, height)) {
@@ -5398,9 +5398,9 @@ void RefreshInGameCGOverlays(bool discover_surfaces) {
         }
         auto* notice_bytes = static_cast<unsigned char*>(
             g_unified_ui.in_game_cg_item_notice);
-        void* parent = *reinterpret_cast<void**>(notice_bytes + 0xF0);
-        const int width = *reinterpret_cast<int*>(notice_bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(notice_bytes + 0x8C);
+        void* parent = GuiField<void*>(notice_bytes, GuiObjectField::parent);
+        const int width = GuiField<int>(notice_bytes, GuiObjectField::width);
+        const int height = GuiField<int>(notice_bytes, GuiObjectField::height);
         if (*(notice_bytes + 0x99) == 0 ||
             !IsInGameCGItemNotice(g_unified_ui.in_game_cg_item_notice,
                 parent, width, height)) {
@@ -5476,9 +5476,9 @@ void RefreshInGameCGOverlays(bool discover_surfaces) {
             continue;
         }
         auto* overlay_bytes = static_cast<unsigned char*>(overlay.object);
-        void* parent = *reinterpret_cast<void**>(overlay_bytes + 0xF0);
-        const int width = *reinterpret_cast<int*>(overlay_bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(overlay_bytes + 0x8C);
+        void* parent = GuiField<void*>(overlay_bytes, GuiObjectField::parent);
+        const int width = GuiField<int>(overlay_bytes, GuiObjectField::width);
+        const int height = GuiField<int>(overlay_bytes, GuiObjectField::height);
         if (*(overlay_bytes + 0x99) == 0 ||
             !IsInGameCGNativeRootStrip(
                 overlay.object, parent, width, height)) {
@@ -5570,8 +5570,8 @@ bool MoveTitlePage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
         original(self, viewport_x, viewport_y);
         return true;
     }
@@ -5585,9 +5585,9 @@ bool MoveTitlePage(PageMoveContext& context) {
                                   static_cast<int>(g_unified_ui.height));
         TitleNativeGeometry* native = RememberTitleNativeGeometry(self);
         if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
+            GuiField<int>(bytes, GuiObjectField::width) =
                 MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
+            GuiField<int>(bytes, GuiObjectField::height) =
                 MulDiv(native->height, viewport_height, LegacyCanvas::height);
         }
         if (IsTitleStripGeometry(native)) {
@@ -5601,7 +5601,7 @@ bool MoveTitlePage(PageMoveContext& context) {
             // once. The two authored strips therefore retain their identities,
             // speed, separation, direction changes, and hand-off order.
             const int input_x = x;
-            const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
+            const int current_x = GuiField<int>(bytes, GuiObjectField::x);
             const bool lead_strip =
                 native->x >= -1000 && native->x <= 1000;
             RegisterTitleStrip(self, native);
@@ -5671,8 +5671,8 @@ bool MoveCompanyNavigationPage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
         original(self, viewport_x, viewport_y);
         return true;
     }
@@ -5693,9 +5693,9 @@ bool MoveCompanyNavigationPage(PageMoveContext& context) {
             // initial slot. The next animation must start at this position.
             native->x = x;
             native->y = y;
-            *reinterpret_cast<int*>(bytes + 0x88) =
+            GuiField<int>(bytes, GuiObjectField::width) =
                 MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
+            GuiField<int>(bytes, GuiObjectField::height) =
                 MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
                 MulDiv(x, viewport_width, LegacyCanvas::width),
@@ -5714,8 +5714,8 @@ bool MoveCompanySectionPage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
         original(self, viewport_x, viewport_y);
         return true;
     }
@@ -5735,10 +5735,10 @@ bool MoveCompanySectionPage(PageMoveContext& context) {
                     *company_section, self, x, y,
                     viewport_width, viewport_height);
             if (native) {
-                *reinterpret_cast<int*>(bytes + 0x88) =
+                GuiField<int>(bytes, GuiObjectField::width) =
                     MulDiv(native->width, viewport_width,
                            LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
+                GuiField<int>(bytes, GuiObjectField::height) =
                     MulDiv(native->height, viewport_height,
                            LegacyCanvas::height);
                 original(self,
@@ -5758,8 +5758,8 @@ bool MoveCompanyRevenuePage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
         original(self, viewport_x, viewport_y);
         return true;
     }
@@ -5816,10 +5816,10 @@ bool MoveCompanyRevenuePage(PageMoveContext& context) {
                 native->x = x;
                 native->y = y;
                 native->height = native_height;
-                *reinterpret_cast<int*>(bytes + 0x88) =
+                GuiField<int>(bytes, GuiObjectField::width) =
                     MulDiv(native->width, viewport_width,
                            LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
+                GuiField<int>(bytes, GuiObjectField::height) =
                     MulDiv(native_height, viewport_height,
                            LegacyCanvas::height);
                 original(self,
@@ -5827,9 +5827,9 @@ bool MoveCompanyRevenuePage(PageMoveContext& context) {
                     MulDiv(y, viewport_height, LegacyCanvas::height));
                 return true;
             }
-            *reinterpret_cast<int*>(bytes + 0x88) =
+            GuiField<int>(bytes, GuiObjectField::width) =
                 MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
+            GuiField<int>(bytes, GuiObjectField::height) =
                 MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
                 MulDiv(x, viewport_width, LegacyCanvas::width),
@@ -5847,8 +5847,8 @@ bool MoveAirportPage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
         original(self, viewport_x, viewport_y);
         return true;
     }
@@ -5869,13 +5869,13 @@ bool MoveAirportPage(PageMoveContext& context) {
                 // The route controller reads this same rectangle back while
                 // interpolating and deciding when the airplane is visible.
                 // Preserve native logical geometry; only rendering is scaled.
-                *reinterpret_cast<int*>(bytes + 0x88) = native->width;
-                *reinterpret_cast<int*>(bytes + 0x8C) = native->height;
+                GuiField<int>(bytes, GuiObjectField::width) = native->width;
+                GuiField<int>(bytes, GuiObjectField::height) = native->height;
                 original(self, x, y);
             } else {
-                *reinterpret_cast<int*>(bytes + 0x88) =
+                GuiField<int>(bytes, GuiObjectField::width) =
                     MulDiv(native->width, viewport_width, LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
+                GuiField<int>(bytes, GuiObjectField::height) =
                     MulDiv(native->height, viewport_height, LegacyCanvas::height);
                 original(self,
                     MulDiv(native->x, viewport_width, LegacyCanvas::width),
@@ -5915,9 +5915,9 @@ bool MoveTrainingFramePage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) =
+        GuiField<int>(bytes, GuiObjectField::width) =
             MulDiv(426, viewport_width, LegacyCanvas::width);
-        *reinterpret_cast<int*>(bytes + 0x8C) =
+        GuiField<int>(bytes, GuiObjectField::height) =
             MulDiv(369, viewport_height, LegacyCanvas::height);
         original(self,
             viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
@@ -5937,9 +5937,9 @@ bool MoveTrainingFramePage(PageMoveContext& context) {
             std::size(g_training_minigame_geometry),
             g_training_minigame_geometry_count, self);
         if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
+            GuiField<int>(bytes, GuiObjectField::width) =
                 MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
+            GuiField<int>(bytes, GuiObjectField::height) =
                 MulDiv(native->height, viewport_height, LegacyCanvas::height);
             // Training activities move prompts and judgement markers while
             // they run. Scale the coordinates supplied by this update rather
@@ -5989,8 +5989,8 @@ bool MoveAnnouncementPage(PageMoveContext& context) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
             AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                   static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+        GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
         g_scaling_announcement_subtree = true;
         original(self, viewport_x, viewport_y);
         g_scaling_announcement_subtree = false;
@@ -6017,9 +6017,9 @@ bool MoveAnnouncementPage(PageMoveContext& context) {
             // instead of freezing the first (often 0,0) construction value.
             native->x = x;
             native->y = y;
-            *reinterpret_cast<int*>(bytes + 0x88) =
+            GuiField<int>(bytes, GuiObjectField::width) =
                 MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
+            GuiField<int>(bytes, GuiObjectField::height) =
                 MulDiv(native->height, viewport_height, LegacyCanvas::height);
             original(self,
                 MulDiv(native->x, viewport_width, LegacyCanvas::width),
@@ -6072,15 +6072,15 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         auto** return_slot = reinterpret_cast<void**>(_AddressOfReturnAddress());
         world_source_return = return_slot[3];
     }
-    void* parent = *reinterpret_cast<void**>(bytes + 0xF0);
+    void* parent = GuiField<void*>(bytes, GuiObjectField::parent);
     if (!g_company_navigation_root) {
         // Construction/show callbacks can arrive before the next BeginScene.
         DiscoverCompanyNavigation(parent);
     }
     if (self == g_phone_overlay_button &&
         parent == g_phone_overlay_root && IsPhoneOverlayRinging()) {
-        const int width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int width = GuiField<int>(bytes, GuiObjectField::width);
+        const int height = GuiField<int>(bytes, GuiObjectField::height);
         const bool off_screen = x + width <= 0 || y + height <= 0 ||
             x >= static_cast<int>(g_unified_ui.width) ||
             y >= static_cast<int>(g_unified_ui.height);
@@ -6090,10 +6090,10 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             GetPhoneOverlayButtonPosition(x, y);
         }
         original(self, x, y);
-        if (*reinterpret_cast<int*>(bytes + 0x80) != x ||
-            *reinterpret_cast<int*>(bytes + 0x84) != y) {
-            *reinterpret_cast<int*>(bytes + 0x80) = x;
-            *reinterpret_cast<int*>(bytes + 0x84) = y;
+        if (GuiField<int>(bytes, GuiObjectField::x) != x ||
+            GuiField<int>(bytes, GuiObjectField::y) != y) {
+            GuiField<int>(bytes, GuiObjectField::x) = x;
+            GuiField<int>(bytes, GuiObjectField::y) = y;
         }
         return;
     }
@@ -6101,8 +6101,8 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     if (DispatchAspectFitPageMove(page_move)) {
         return;
     }
-    const int current_width = *reinterpret_cast<int*>(bytes + 0x88);
-    const int current_height = *reinterpret_cast<int*>(bytes + 0x8C);
+    const int current_width = GuiField<int>(bytes, GuiObjectField::width);
+    const int current_height = GuiField<int>(bytes, GuiObjectField::height);
     if (self == g_title_tutorial_bubble ||
         IsTitleTutorialDialogueBubble(
             self, parent, current_width, current_height, x, y)) {
@@ -6112,11 +6112,11 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     }
     if (parent) {
         auto* parent_bytes = static_cast<unsigned char*>(parent);
-        int& parent_width = *reinterpret_cast<int*>(parent_bytes + 0x88);
-        int& parent_height = *reinterpret_cast<int*>(parent_bytes + 0x8C);
+        int& parent_width = GuiField<int>(parent_bytes, GuiObjectField::width);
+        int& parent_height = GuiField<int>(parent_bytes, GuiObjectField::height);
         const bool legacy_root = parent_width >= 790 && parent_width <= 810 &&
             parent_height >= 590 && parent_height <= 610;
-        void* grandparent = *reinterpret_cast<void**>(parent_bytes + 0xF0);
+        void* grandparent = GuiField<void*>(parent_bytes, GuiObjectField::parent);
         if (IsLoadingPageRoot(parent, grandparent,
                               parent_width, parent_height) &&
             g_loading_page_root != parent) {
@@ -6157,8 +6157,8 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             return;
         }
 
-        const int self_width = *reinterpret_cast<int*>(bytes + 0x88);
-        const int self_height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const int self_width = GuiField<int>(bytes, GuiObjectField::width);
+        const int self_height = GuiField<int>(bytes, GuiObjectField::height);
         const bool possible_cg_overlay = parent == g_unified_ui.primary_root &&
             self_width >= 798 && self_width <= 802 &&
             ((self_height >= 72 && self_height <= 80) ||
@@ -6223,8 +6223,8 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
                 AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                       static_cast<int>(g_unified_ui.height));
-            *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-            *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+            GuiField<int>(bytes, GuiObjectField::width) = viewport_width;
+            GuiField<int>(bytes, GuiObjectField::height) = viewport_height;
             original(self, MulDiv(x, viewport_width, LegacyCanvas::width),
                 MulDiv(y, viewport_height, LegacyCanvas::height));
             return;
@@ -6241,8 +6241,8 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 original(self, x, y);
                 return;
             }
-            const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
-            const int current_y = *reinterpret_cast<int*>(bytes + 0x84);
+            const int current_x = GuiField<int>(bytes, GuiObjectField::x);
+            const int current_y = GuiField<int>(bytes, GuiObjectField::y);
             const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
                 AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                                       static_cast<int>(g_unified_ui.height));
@@ -6271,9 +6271,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                 std::size(dropdown_owner->geometry),
                 dropdown_owner->geometry_count, self);
             if (native) {
-                *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
+                GuiField<int>(bytes, GuiObjectField::width) = MulDiv(
                     native->width, viewport_width, LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) = MulDiv(
+                GuiField<int>(bytes, GuiObjectField::height) = MulDiv(
                     native->height, viewport_height, LegacyCanvas::height);
                 original(self,
                     MulDiv(x, viewport_width, LegacyCanvas::width),
@@ -6289,15 +6289,15 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             // stalls the render thread. The object being moved is adapted by
             // the dispatch below; newly attached siblings are picked up by
             // their own Move call or by the low-frequency maintenance pass.
-            const int width = *reinterpret_cast<int*>(bytes + 0x88);
-            const int height = *reinterpret_cast<int*>(bytes + 0x8C);
+            const int width = GuiField<int>(bytes, GuiObjectField::width);
+            const int height = GuiField<int>(bytes, GuiObjectField::height);
             // Full-canvas proxy objects are layout containers, not visible HUD
             // widgets. Keep their origin stable so descendants are not shifted
             // twice. Ordinary root children receive one anchor transform.
             if (IsFullscreenLeafSurface(self, parent, width, height)) {
-                *reinterpret_cast<int*>(bytes + 0x88) =
+                GuiField<int>(bytes, GuiObjectField::width) =
                     static_cast<int>(g_unified_ui.width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
+                GuiField<int>(bytes, GuiObjectField::height) =
                     static_cast<int>(g_unified_ui.height);
                 x = 0;
                 y = 0;
@@ -6379,10 +6379,10 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                             viewport_height] = AspectFitLegacyCanvas(
                     static_cast<int>(g_unified_ui.width),
                     static_cast<int>(g_unified_ui.height));
-                *reinterpret_cast<int*>(bytes + 0x88) = MulDiv(
+                GuiField<int>(bytes, GuiObjectField::width) = MulDiv(
                     layout->native_width,
                     viewport_width, LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) = MulDiv(
+                GuiField<int>(bytes, GuiObjectField::height) = MulDiv(
                     layout->native_height,
                     viewport_height, LegacyCanvas::height);
                 x = viewport_x + MulDiv(x, viewport_width, LegacyCanvas::width);

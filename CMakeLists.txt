@@ -94,6 +94,12 @@ target_include_directories(ui_page_geometry_tests PRIVATE src)
 target_compile_definitions(ui_page_geometry_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 set_property(TARGET ui_page_geometry_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+add_executable(gui_field_tests tests/gui_field_tests.cpp)
+target_compile_features(gui_field_tests PRIVATE cxx_std_17)
+target_include_directories(gui_field_tests PRIVATE src)
+set_property(TARGET gui_field_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME gui_field COMMAND gui_field_tests)
+
 add_test(NAME resolution_geometry COMMAND resolution_geometry_tests)
 add_test(NAME proxy_config COMMAND proxy_config_tests)
 add_test(NAME ui_layout_registry COMMAND ui_layout_registry_tests)
