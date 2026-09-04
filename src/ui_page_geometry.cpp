@@ -128,6 +128,44 @@ bool IsDescendantOf(void* object, void* root, int maximum_depth) {
     return false;
 }
 
+namespace {
+
+// Called only after dispatch has established root/descendant membership.
+bool ApplyMatchedPageMove(const StaticPageMoveRule& rule, bool is_root,
+                          void* object, int screen_width, int screen_height,
+                          int& x, int& y, RepeatedPositionPredicate is_repeated) {
+    if (is_root) {
+        const auto [left, top, width, height] =
+            AspectFitLegacyCanvas(screen_width, screen_height);
+        GuiField<int>(object, GuiObjectField::width) = width;
+        GuiField<int>(object, GuiObjectField::height) = height;
+        x = left;
+        y = top;
+        return true;
+    }
+    if (is_repeated(object, x, y)) {
+        return true;
+    }
+    NativeGeometry* native = RememberGeometry(
+        rule.geometries, rule.capacity, *rule.count, object);
+    if (!native) {
+        return false;
+    }
+    const auto [left, top, width, height] =
+        AspectFitLegacyCanvas(screen_width, screen_height);
+    GuiField<int>(object, GuiObjectField::width) =
+        MulDiv(native->width, width, LegacyCanvas::width);
+    GuiField<int>(object, GuiObjectField::height) =
+        MulDiv(native->height, height, LegacyCanvas::height);
+    const bool submitted =
+        rule.coordinates == PageMoveCoordinates::SubmittedNative;
+    x = MulDiv(submitted ? x : native->x, width, LegacyCanvas::width);
+    y = MulDiv(submitted ? y : native->y, height, LegacyCanvas::height);
+    return true;
+}
+
+}  // namespace
+
 bool ApplyStaticPageMove(const StaticPageMoveRule* rules, size_t rule_count,
                          void* object, void* parent, int screen_width,
                          int screen_height, int& x, int& y,
@@ -137,38 +175,74 @@ bool ApplyStaticPageMove(const StaticPageMoveRule* rules, size_t rule_count,
     }
     for (size_t i = 0; i < rule_count; ++i) {
         const auto& rule = rules[i];
-        if (object == rule.root) {
-            const auto [left, top, width, height] =
-                AspectFitLegacyCanvas(screen_width, screen_height);
-            GuiField<int>(object, GuiObjectField::width) = width;
-            GuiField<int>(object, GuiObjectField::height) = height;
-            x = left;
-            y = top;
-            return true;
-        }
-        if (!parent || !IsDescendantOf(object, rule.root)) {
+        const bool is_root = object == rule.root;
+        if (!is_root && (!parent || !IsDescendantOf(
+                object, rule.root, rule.maximum_ancestor_depth))) {
             continue;
         }
-        if (is_repeated(object, x, y)) {
+        if (ApplyMatchedPageMove(rule, is_root, object, screen_width,
+                                  screen_height, x, y, is_repeated)) {
             return true;
         }
-        NativeGeometry* native = RememberGeometry(
-            rule.geometries, rule.capacity, *rule.count, object);
-        if (!native) {
-            // Preserve fallthrough into later rules and specialised branches.
-            continue;
-        }
-        const auto [left, top, width, height] =
-            AspectFitLegacyCanvas(screen_width, screen_height);
-        GuiField<int>(object, GuiObjectField::width) =
-            MulDiv(native->width, width, LegacyCanvas::width);
-        GuiField<int>(object, GuiObjectField::height) =
-            MulDiv(native->height, height, LegacyCanvas::height);
-        x = MulDiv(native->x, width, LegacyCanvas::width);
-        y = MulDiv(native->y, height, LegacyCanvas::height);
-        return true;
+        // Preserve cache-exhaustion fallthrough into later independent rules.
     }
     return false;
+}
+
+bool ApplyPageGroupMove(const StaticPageMoveRule& shared_rule,
+                        void* const* roots, size_t root_count,
+                        void* object, void* parent, int screen_width,
+                        int screen_height, int& x, int& y,
+                        RepeatedPositionPredicate is_repeated) {
+    if (!object) {
+        return false;
+    }
+    for (size_t i = 0; i < root_count; ++i) {
+        if (object == roots[i]) {
+            return ApplyMatchedPageMove(shared_rule, true, object, screen_width,
+                                         screen_height, x, y, is_repeated);
+        }
+    }
+    if (parent) {
+        for (size_t i = 0; i < root_count; ++i) {
+            if (IsDescendantOf(object, roots[i],
+                               shared_rule.maximum_ancestor_depth)) {
+                // All group members share the same cache and coordinate policy.
+                // On exhaustion the caller's next specialised branch must run.
+                return ApplyMatchedPageMove(shared_rule, false, object,
+                    screen_width, screen_height, x, y, is_repeated);
+            }
+        }
+    }
+    return false;
+}
+
+const StaticPageReflowRule* ReflowStaticPage(
+    const StaticPageReflowRule* rules, size_t rule_count,
+    void* object, void* parent, int width, int height,
+    void (*remember_root)(void*), void (*mark_processed)(void*),
+    bool& discovered) {
+    discovered = false;
+    if (!object) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < rule_count; ++i) {
+        const auto& rule = rules[i];
+        if (object != rule.root) {
+            if (!rule.matches(object, parent, width, height)) {
+                continue;
+            }
+            rule.reset(object);
+            remember_root(object);
+            discovered = true;
+        }
+        if (discovered || rule.refresh == PageRefreshPolicy::ReapplySubtree) {
+            rule.scale(object, 0);
+        }
+        mark_processed(object);
+        return &rule;
+    }
+    return nullptr;
 }
 
 }  // namespace stardom

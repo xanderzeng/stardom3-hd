@@ -18,19 +18,48 @@ NativeGeometry* RememberGeometry(NativeGeometry* geometries, size_t capacity,
                                  size_t& count, void* object);
 bool IsDescendantOf(void* object, void* root, int maximum_depth = 10);
 
-// Only static aspect-fit pages belong here; animated/live-coordinate pages
-// retain their specialised dispatch. Rules are evaluated root then descendants.
+// Standard aspect-fit roots only. Special per-control animation transforms
+// remain outside this dispatcher. Rules run root then descendants in order.
+enum class PageMoveCoordinates { CachedNative, SubmittedNative };
 struct StaticPageMoveRule {
     void* root;
     NativeGeometry* geometries;
     size_t capacity;
     size_t* count;
+    int maximum_ancestor_depth = 10;
+    PageMoveCoordinates coordinates = PageMoveCoordinates::CachedNative;
 };
 using RepeatedPositionPredicate = bool (*)(void*, int, int);
+enum class PageRefreshPolicy { ReapplySubtree, PreserveControllerState };
+struct StaticPageReflowRule {
+    void* root;
+    bool (*matches)(void*, void*, int, int);
+    void (*reset)(void*);
+    void (*scale)(void*, int);
+    const char* name;
+    PageRefreshPolicy refresh = PageRefreshPolicy::ReapplySubtree;
+};
+// Known-root refresh skips discovery/reset. A new match is reset and registered
+// before scaling. Controller-owned pages must not replay their cached subtree
+// on refresh. Both paths still mark the root processed.
+const StaticPageReflowRule* ReflowStaticPage(
+    const StaticPageReflowRule* rules, size_t rule_count,
+    void* object, void* parent, int width, int height,
+    void (*remember_root)(void*), void (*mark_processed)(void*),
+    bool& discovered);
+
 bool ApplyStaticPageMove(const StaticPageMoveRule* rules, size_t rule_count,
                          void* object, void* parent, int screen_width,
                          int screen_height, int& x, int& y,
                          RepeatedPositionPredicate is_repeated);
+
+// Coexisting pages may share one geometry cache. Unlike independent rules,
+// every group root must be checked before any descendant match.
+bool ApplyPageGroupMove(const StaticPageMoveRule& shared_rule,
+                        void* const* roots, size_t root_count,
+                        void* object, void* parent, int screen_width,
+                        int screen_height, int& x, int& y,
+                        RepeatedPositionPredicate is_repeated);
 
 // Company reports recenter their artist columns and animate their tab slots.
 // Recognition must not depend on the initial resource's horizontal positions.
