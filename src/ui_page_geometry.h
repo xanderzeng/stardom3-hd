@@ -18,6 +18,20 @@ NativeGeometry* RememberGeometry(NativeGeometry* geometries, size_t capacity,
                                  size_t& count, void* object);
 bool IsDescendantOf(void* object, void* root, int maximum_depth = 10);
 
+// Only static aspect-fit pages belong here; animated/live-coordinate pages
+// retain their specialised dispatch. Rules are evaluated root then descendants.
+struct StaticPageMoveRule {
+    void* root;
+    NativeGeometry* geometries;
+    size_t capacity;
+    size_t* count;
+};
+using RepeatedPositionPredicate = bool (*)(void*, int, int);
+bool ApplyStaticPageMove(const StaticPageMoveRule* rules, size_t rule_count,
+                         void* object, void* parent, int screen_width,
+                         int screen_height, int& x, int& y,
+                         RepeatedPositionPredicate is_repeated);
+
 // Company reports recenter their artist columns and animate their tab slots.
 // Recognition must not depend on the initial resource's horizontal positions.
 bool IsCompanyChartColumn(int x, int y, int width, int height);

@@ -128,4 +128,47 @@ bool IsDescendantOf(void* object, void* root, int maximum_depth) {
     return false;
 }
 
+bool ApplyStaticPageMove(const StaticPageMoveRule* rules, size_t rule_count,
+                         void* object, void* parent, int screen_width,
+                         int screen_height, int& x, int& y,
+                         RepeatedPositionPredicate is_repeated) {
+    if (!object) {
+        return false;
+    }
+    for (size_t i = 0; i < rule_count; ++i) {
+        const auto& rule = rules[i];
+        if (object == rule.root) {
+            const auto [left, top, width, height] =
+                AspectFitLegacyCanvas(screen_width, screen_height);
+            GuiField<int>(object, GuiObjectField::width) = width;
+            GuiField<int>(object, GuiObjectField::height) = height;
+            x = left;
+            y = top;
+            return true;
+        }
+        if (!parent || !IsDescendantOf(object, rule.root)) {
+            continue;
+        }
+        if (is_repeated(object, x, y)) {
+            return true;
+        }
+        NativeGeometry* native = RememberGeometry(
+            rule.geometries, rule.capacity, *rule.count, object);
+        if (!native) {
+            // Preserve fallthrough into later rules and specialised branches.
+            continue;
+        }
+        const auto [left, top, width, height] =
+            AspectFitLegacyCanvas(screen_width, screen_height);
+        GuiField<int>(object, GuiObjectField::width) =
+            MulDiv(native->width, width, LegacyCanvas::width);
+        GuiField<int>(object, GuiObjectField::height) =
+            MulDiv(native->height, height, LegacyCanvas::height);
+        x = MulDiv(native->x, width, LegacyCanvas::width);
+        y = MulDiv(native->y, height, LegacyCanvas::height);
+        return true;
+    }
+    return false;
+}
+
 }  // namespace stardom

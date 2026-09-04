@@ -26,11 +26,103 @@ void SetGeometry(TestGuiObject& object, int x, int y,
     stardom::GuiField<int>(object.bytes, stardom::GuiObjectField::height) = height;
 }
 
+bool repeated_position = false;
+int repeated_checks = 0;
+bool IsRepeatedForTest(void*, int, int) {
+    ++repeated_checks;
+    return repeated_position;
+}
+
+bool TestStaticPageMoves() {
+    using namespace stardom;
+    bool ok = true;
+    TestGuiObject roots[3]{}, children[3]{}, unrelated{};
+    NativeGeometry caches[3][2]{};
+    size_t counts[3]{};
+    StaticPageMoveRule rules[3]{};
+    for (size_t i = 0; i < 3; ++i) {
+        rules[i] = {roots[i].bytes, caches[i], 2, &counts[i]};
+        SetGeometry(children[i], 100, 50, 80, 40);
+        GuiField<void*>(children[i].bytes, GuiObjectField::parent) = roots[i].bytes;
+    }
+    auto move = [&](void* object, void* parent, int& x, int& y) {
+        return ApplyStaticPageMove(rules, 3, object, parent, 1920, 1080,
+                                   x, y, IsRepeatedForTest);
+    };
+    for (size_t i = 0; i < 3; ++i) {
+        int x = 999, y = 888;
+        repeated_position = true;
+        repeated_checks = 0;
+        ok &= Expect(move(roots[i].bytes, nullptr, x, y) &&
+                     x == 240 && y == 0 && repeated_checks == 0 &&
+                     GuiField<int>(roots[i].bytes, GuiObjectField::width) == 1440 &&
+                     GuiField<int>(roots[i].bytes, GuiObjectField::height) == 1080 &&
+                     counts[i] == 0,
+            "each page root fits before repeated-position or descendant handling");
+        repeated_position = false;
+        x = 999; y = 888;
+        ok &= Expect(move(children[i].bytes, roots[i].bytes, x, y) &&
+                     x == 180 && y == 90 && counts[i] == 1 &&
+                     GuiField<int>(children[i].bytes, GuiObjectField::width) == 144 &&
+                     GuiField<int>(children[i].bytes, GuiObjectField::height) == 72,
+            "each page descendant scales authored local geometry, not submitted coordinates");
+        x = 777; y = 666;
+        ok &= Expect(move(children[i].bytes, roots[i].bytes, x, y) &&
+                     x == 180 && y == 90 && counts[i] == 1 &&
+                     caches[i][0].width == 80,
+            "subsequent moves reuse native cache without cumulative scaling");
+        repeated_position = true;
+        SetGeometry(children[i], 180, 90, 123, 456);
+        ok &= Expect(move(children[i].bytes, roots[i].bytes, x, y) &&
+                     x == 180 && y == 90 && counts[i] == 1 &&
+                     GuiField<int>(children[i].bytes, GuiObjectField::width) == 123,
+            "repeated moves bypass both cache updates and resizing");
+    }
+    repeated_position = false;
+    int x = 7, y = 9;
+    repeated_checks = 0;
+    ok &= Expect(!move(unrelated.bytes, nullptr, x, y) &&
+                 !move(unrelated.bytes, roots[0].bytes, x, y) &&
+                 !move(children[0].bytes, nullptr, x, y) &&
+                 !move(nullptr, nullptr, x, y) &&
+                 x == 7 && y == 9 && repeated_checks == 0,
+        "unregistered/special pages and parentless descendants fall through untouched");
+
+    // An earlier page's descendant must win over a later page's root.
+    GuiField<void*>(roots[1].bytes, GuiObjectField::parent) = roots[0].bytes;
+    SetGeometry(roots[1], 20, 30, 40, 50);
+    ok &= Expect(move(roots[1].bytes, roots[0].bytes, x, y) &&
+                 x == 36 && y == 54 && counts[0] == 2,
+        "dispatch keeps per-rule root/descendant ordering");
+    counts[0] = 0;
+    rules[0].capacity = 0;
+    ok &= Expect(move(roots[1].bytes, roots[0].bytes, x, y) &&
+                 x == 240 && y == 0 && counts[0] == 0,
+        "exhausted cache falls through to the next matching rule");
+    x = 7; y = 9;
+    SetGeometry(children[0], 100, 50, 80, 40);
+    ok &= Expect(!move(children[0].bytes, roots[0].bytes, x, y) &&
+                 x == 7 && y == 9 &&
+                 GuiField<int>(children[0].bytes, GuiObjectField::width) == 80,
+        "exhausted cache with no later match leaves original move untouched");
+    repeated_position = true;
+    ok &= Expect(move(children[0].bytes, roots[0].bytes, x, y) &&
+                 counts[0] == 0 && x == 7 && y == 9,
+        "repeated moves still succeed when the geometry cache is full");
+    repeated_position = false;
+    rules[0].root = nullptr;
+    repeated_checks = 0;
+    ok &= Expect(!move(children[0].bytes, roots[0].bytes, x, y) && repeated_checks == 0,
+        "absent page roots cannot claim another page's descendants");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
     using namespace stardom;
     bool ok = true;
+    ok &= TestStaticPageMoves();
     const auto text_native = FitPageTextMetrics(12, 0, 600);
     const auto text_hd = FitPageTextMetrics(12, 0, 1080);
     const auto text_multiline = FitPageTextMetrics(16, 3, 1080);

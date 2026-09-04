@@ -86,6 +86,7 @@ set_property(TARGET ui_layout_registry_tests PROPERTY MSVC_RUNTIME_LIBRARY "Mult
 add_executable(ui_page_geometry_tests
     tests/ui_page_geometry_tests.cpp
     src/ui_page_geometry.cpp
+    src/ui_geometry.cpp
     src/gui_object.cpp
 )
 target_compile_features(ui_page_geometry_tests PRIVATE cxx_std_17)

@@ -5773,101 +5773,22 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
             return;
         }
     }
-    if (self == g_artist_profile_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
+    // Keep these static pages in their original dispatch order. Animated
+    // pages (including company navigation) stay in the specialised paths below.
+    const StaticPageMoveRule static_pages[] = {
+        {g_artist_profile_root, g_artist_profile_geometry,
+         std::size(g_artist_profile_geometry), &g_artist_profile_geometry_count},
+        {g_artist_contract_root, g_artist_contract_geometry,
+         std::size(g_artist_contract_geometry), &g_artist_contract_geometry_count},
+        {g_artist_signing_root, g_artist_signing_geometry,
+         std::size(g_artist_signing_geometry), &g_artist_signing_geometry_count},
+    };
+    if (ApplyStaticPageMove(static_pages, std::size(static_pages), self, parent,
+                            static_cast<int>(g_unified_ui.width),
+                            static_cast<int>(g_unified_ui.height), x, y,
+                            IsRepeatedObjectPosition)) {
+        original(self, x, y);
         return;
-    }
-    if (parent && IsArtistProfileDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_artist_profile_geometry,
-            std::size(g_artist_profile_geometry),
-            g_artist_profile_geometry_count, self);
-        if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(self,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-            return;
-        }
-    }
-    if (self == g_artist_contract_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent && IsArtistContractDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_artist_contract_geometry,
-            std::size(g_artist_contract_geometry),
-            g_artist_contract_geometry_count, self);
-        if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(self,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-            return;
-        }
-    }
-    if (self == g_artist_signing_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent && IsArtistSigningDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_artist_signing_geometry,
-            std::size(g_artist_signing_geometry),
-            g_artist_signing_geometry_count, self);
-        if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(self,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-            return;
-        }
     }
     if (self == g_company_navigation_root) {
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
