@@ -2068,7 +2068,9 @@ void ScaleAspectFitSubtree(
         static_cast<int>(g_unified_ui.width),
         static_cast<int>(g_unified_ui.height));
     if (depth == 0) {
-        reset_geometry(object);
+        if (!PrepareAspectFitRoot(reset_geometry, object)) {
+            return;
+        }
         width = viewport.width;
         height = viewport.height;
         original(object, viewport.x, viewport.y);
@@ -2219,10 +2221,6 @@ void ResetArtistProfileGeometry(void* root) {
     g_artist_profile_geometry_count = 0;
 }
 
-bool IsArtistProfileDescendant(void* object) {
-    return IsDescendantOf(object, g_artist_profile_root);
-}
-
 void CorrectArtistRadarVertices() {
     if (!CanReadGuiObject(g_artist_profile_root) ||
         *reinterpret_cast<unsigned char*>(
@@ -2335,10 +2333,6 @@ void ResetArtistContractGeometry(void* root) {
     g_artist_contract_geometry_count = 0;
 }
 
-bool IsArtistContractDescendant(void* object) {
-    return IsDescendantOf(object, g_artist_contract_root);
-}
-
 void ScaleArtistContractSubtree(void* object, int depth = 0) {
     ScaleAspectFitSubtree(
         object, depth, g_artist_contract_geometry,
@@ -2351,10 +2345,6 @@ void ResetArtistSigningGeometry(void* root) {
     }
     g_artist_signing_root = root;
     g_artist_signing_geometry_count = 0;
-}
-
-bool IsArtistSigningDescendant(void* object) {
-    return IsDescendantOf(object, g_artist_signing_root);
 }
 
 void ScaleArtistSigningSubtree(void* object, int depth = 0) {
@@ -2903,10 +2893,6 @@ void ResetStudioEventListGeometry(void* root) {
     g_studio_event_list_geometry_count = 0;
 }
 
-bool IsStudioEventListDescendant(void* object) {
-    return IsDescendantOf(object, g_studio_event_list_root, 8);
-}
-
 void ScaleStudioEventListSubtree(void* object, int depth = 0) {
     ScaleAspectFitSubtree(
         object, depth, g_studio_event_list_geometry,
@@ -2920,10 +2906,6 @@ void ResetStudioEventEditorGeometry(void* root) {
     }
     g_studio_event_editor_root = root;
     g_studio_event_editor_geometry_count = 0;
-}
-
-bool IsStudioEventEditorDescendant(void* object) {
-    return IsDescendantOf(object, g_studio_event_editor_root, 8);
 }
 
 void ScaleStudioEventEditorSubtree(void* object, int depth = 0) {
@@ -3114,15 +3096,6 @@ bool RememberTrainingActivityRoot(void* object) {
     return true;
 }
 
-bool IsTrainingActivityDescendant(void* object) {
-    for (size_t i = 0; i < g_training_activity_root_count; ++i) {
-        if (IsDescendantOf(object, g_training_activity_roots[i])) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool IsTrainingActivityPage(void* object, void* parent,
                             int width, int height) {
     if (!CanReadGuiObject(g_training_minigame_root) ||
@@ -3219,46 +3192,11 @@ void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
 }
 
 void ScaleTrainingActivitySubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        if (!RememberTrainingActivityRoot(object)) {
-            return;
-        }
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_training_activity_geometry,
-            std::size(g_training_activity_geometry),
-            g_training_activity_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 256) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleTrainingActivitySubtree(child, depth + 1);
-        child = next;
-    }
+    // Registration can fail when all 16 activity-root slots are occupied.
+    // The common template must stop before fitting that unregistered subtree.
+    ScaleAspectFitSubtree(
+        object, depth, g_training_activity_geometry,
+        g_training_activity_geometry_count, RememberTrainingActivityRoot, 8, 256);
 }
 
 void ResetTitleTutorialGeometry(void* root) {
@@ -3267,10 +3205,6 @@ void ResetTitleTutorialGeometry(void* root) {
     }
     g_title_tutorial_root = root;
     g_title_tutorial_geometry_count = 0;
-}
-
-bool IsTitleTutorialDescendant(void* object) {
-    return IsDescendantOf(object, g_title_tutorial_root);
 }
 
 void ScaleTitleTutorialSubtree(void* object, int depth = 0) {
@@ -3329,10 +3263,6 @@ void ResetTitleTutorialQuestionGeometry(void* root) {
     }
     g_title_tutorial_question_root = root;
     g_title_tutorial_question_geometry_count = 0;
-}
-
-bool IsTitleTutorialQuestionDescendant(void* object) {
-    return IsDescendantOf(object, g_title_tutorial_question_root, 6);
 }
 
 void ScaleTitleTutorialQuestionSubtree(void* object, int depth = 0) {

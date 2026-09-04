@@ -372,6 +372,39 @@ bool TestControllerOwnedRefresh() {
     return ok;
 }
 
+bool TestRootPreparation() {
+    using namespace stardom;
+    bool ok = true;
+    TestGuiObject root{};
+    int calls = 0;
+    void* observed = nullptr;
+    auto reset = [&](void* object) {
+        ++calls;
+        observed = object;
+    };
+    ok &= Expect(PrepareAspectFitRoot(reset, root.bytes) &&
+                 calls == 1 && observed == root.bytes,
+        "legacy void reset executes exactly once and permits subtree fitting");
+    bool admitted = true;
+    auto register_root = [&](void* object) -> bool {
+        ++calls;
+        observed = object;
+        return admitted;
+    };
+    ok &= Expect(PrepareAspectFitRoot(register_root, root.bytes) && calls == 2,
+        "successful bounded root registration permits subtree fitting");
+    admitted = false;
+    SetGeometry(root, 10, 20, 800, 600);
+    ok &= Expect(!PrepareAspectFitRoot(register_root, root.bytes) && calls == 3 &&
+                 observed == root.bytes &&
+                 GuiField<int>(root.bytes, GuiObjectField::width) == 800,
+        "rejected root registration propagates failure without changing geometry");
+    admitted = true;
+    ok &= Expect(PrepareAspectFitRoot(register_root, root.bytes) && calls == 4,
+        "a prior rejection is not cached across future root registration attempts");
+    return ok;
+}
+
 bool TestPageGroupMoves() {
     using namespace stardom;
     bool ok = true;
@@ -456,6 +489,7 @@ int main() {
     ok &= TestSubmittedPageMoves();
     ok &= TestControllerOwnedRefresh();
     ok &= TestPageGroupMoves();
+    ok &= TestRootPreparation();
     const auto text_native = FitPageTextMetrics(12, 0, 600);
     const auto text_hd = FitPageTextMetrics(12, 0, 1080);
     const auto text_multiline = FitPageTextMetrics(16, 3, 1080);

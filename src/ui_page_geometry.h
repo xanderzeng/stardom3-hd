@@ -1,8 +1,23 @@
 #pragma once
 
 #include <cstddef>
+#include <type_traits>
 
 namespace stardom {
+
+// Most roots only reset their cache (void); bounded multi-root registries can
+// refuse a new root (bool). The subtree must stop before any writes on failure.
+template <typename PrepareRoot>
+bool PrepareAspectFitRoot(PrepareRoot prepare, void* object) {
+    if constexpr (std::is_same_v<decltype(prepare(object)), bool>) {
+        return prepare(object);
+    } else {
+        static_assert(std::is_same_v<decltype(prepare(object)), void>,
+                      "Root preparation must return void or bool");
+        prepare(object);
+        return true;
+    }
+}
 
 struct NativeGeometry {
     void* object = nullptr;
