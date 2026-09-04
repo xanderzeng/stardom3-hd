@@ -10,9 +10,9 @@ namespace stardom {
 
 PageTextMetrics FitPageTextMetrics(int font_size, int line_gap,
                                    int viewport_height) {
-    const int font = MulDiv(font_size, viewport_height, 600);
+    const int font = MulDiv(font_size, viewport_height, LegacyCanvas::height);
     // Text labels have an implicit one-pixel inter-line gap (005307C8).
-    return {font, MulDiv(font_size + line_gap + 1, viewport_height, 600) - font - 1};
+    return {font, MulDiv(font_size + line_gap + 1, viewport_height, LegacyCanvas::height) - font - 1};
 }
 
 int CorrectCompanyColumnCenter(int submitted_x, int fitted_width,
@@ -22,15 +22,15 @@ int CorrectCompanyColumnCenter(int submitted_x, int fitted_width,
 
 CompanyListMetrics FitCompanyListMetrics(const CompanyListMetrics& native,
                                         int viewport_width, int viewport_height) {
-    const int font = MulDiv(native.font_size, viewport_height, 600);
+    const int font = MulDiv(native.font_size, viewport_height, LegacyCanvas::height);
     // Round the complete baseline interval once so every row matches the
     // separately scaled month-board positions, with no accumulated drift.
     const int pitch = MulDiv(native.font_size + native.line_gap,
-                             viewport_height, 600);
-    return {MulDiv(native.left, viewport_width, 800),
-            MulDiv(native.top, viewport_height, 600),
-            MulDiv(native.right, viewport_width, 800),
-            MulDiv(native.bottom, viewport_height, 600), font, pitch - font};
+                             viewport_height, LegacyCanvas::height);
+    return {MulDiv(native.left, viewport_width, LegacyCanvas::width),
+            MulDiv(native.top, viewport_height, LegacyCanvas::height),
+            MulDiv(native.right, viewport_width, LegacyCanvas::width),
+            MulDiv(native.bottom, viewport_height, LegacyCanvas::height), font, pitch - font};
 }
 
 bool IsCompanyChartColumn(int x, int y, int width, int height) {

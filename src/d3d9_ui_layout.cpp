@@ -2,6 +2,7 @@
 #include "gui_object.h"
 #include "ui_layout_registry.h"
 #include "ui_page_geometry.h"
+#include "ui_dispatch.h"
 
 #include <intrin.h>
 
@@ -1538,14 +1539,14 @@ void GetInGameCGCaptionPosition(int native_y, int& x, int& y) {
     // authored 800x600 overlay and translate it as one native-size canvas.
     // Do not scale y through the aspect-fit image viewport; doing so feeds an
     // already moved value back into the next refresh and pushes the bar down.
-    x = viewport_x + (viewport_width - 800) / 2;
-    y = native_y + (static_cast<int>(g_unified_ui.height) - 600) / 2;
+    x = viewport_x + (viewport_width - LegacyCanvas::width) / 2;
+    y = native_y + (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
 }
 
 void GetInGameCGNativeOverlayPosition(int native_x, int native_y,
                                       int& x, int& y) {
-    x = native_x + (static_cast<int>(g_unified_ui.width) - 800) / 2;
-    y = native_y + (static_cast<int>(g_unified_ui.height) - 600) / 2;
+    x = native_x + (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
+    y = native_y + (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
 }
 
 UnifiedUILayoutState::InGameCGNativeOverlay*
@@ -1584,7 +1585,7 @@ RegisterInGameCGNativeOverlay(void* object, int native_x, int native_y,
     // x to remain close to zero prevents unrelated screen-space UI from being
     // captured merely because a story CG happens to be visible behind it.
     if (native_x < -32 || native_x > 32 ||
-        native_y < -200 || native_y > 600) {
+        native_y < -200 || native_y > LegacyCanvas::height) {
         return nullptr;
     }
     UnifiedUILayoutState::InGameCGNativeOverlay* free_slot = nullptr;
@@ -1705,16 +1706,6 @@ void LayoutInGameCGRoot(void* object) {
 
 bool IsPhotoAlbumDescendant(void* object) {
     return IsDescendantOf(object, g_unified_ui.photo_album_root);
-}
-
-void GetPhotoAlbumViewport(UINT output_width, UINT output_height,
-                           int& x, int& y, int& width, int& height) {
-    const RectI viewport = AspectFitLegacyCanvas(
-        static_cast<int>(output_width), static_cast<int>(output_height));
-    x = viewport.x;
-    y = viewport.y;
-    width = viewport.width;
-    height = viewport.height;
 }
 
 bool IsTitleScreenDescendant(void* object) {
@@ -1918,48 +1909,46 @@ void UpdateTitleStripMotion(ULONGLONG now) {
 }
 
 void ScaleTitleScreenSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetTitleNativeGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        const bool newly_discovered = FindTitleNativeGeometry(object) == nullptr;
-        TitleNativeGeometry* native = RememberTitleNativeGeometry(object);
-        RegisterTitleStrip(object, native);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            // Existing objects may currently be between animation keyframes.
-            // Only translate a newly discovered object here; later movement is
-            // handled by HookGuiMove without snapping the animation backward.
-            if (newly_discovered) {
-                original(object,
-                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
+        }
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto* bytes = static_cast<unsigned char*>(object);
+        int& width = *reinterpret_cast<int*>(bytes + 0x88);
+        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            ResetTitleNativeGeometry(object);
+            width = viewport_width;
+            height = viewport_height;
+            original(object, viewport_x, viewport_y);
+        } else {
+            const bool newly_discovered = FindTitleNativeGeometry(object) == nullptr;
+            TitleNativeGeometry* native = RememberTitleNativeGeometry(object);
+            RegisterTitleStrip(object, native);
+            if (native) {
+                width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+                // Existing objects may currently be between animation keyframes.
+                // Only translate a newly discovered object here; later movement is
+                // handled by HookGuiMove without snapping the animation backward.
+                if (newly_discovered) {
+                    original(object,
+                        MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                        MulDiv(native->y, viewport_height, LegacyCanvas::height));
+                }
             }
         }
-    }
-    RememberProcessedLayoutObject(object);
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 512) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleTitleScreenSubtree(child, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 8, 512, enter, leave);
 }
 
 TitleNativeGeometry g_title_tutorial_geometry[64]{};
@@ -2035,7 +2024,7 @@ struct EndGameCreditMotionState {
     int native_x = 500;
     int native_y = 0;
     int native_width = 300;
-    int native_height = 600;
+    int native_height = LegacyCanvas::height;
 };
 
 EndGameCreditMotionState g_end_game_credit_motion[2]{};
@@ -2056,48 +2045,44 @@ void ScaleAspectFitSubtree(
         TitleNativeGeometry (&geometry)[GeometryCapacity],
         size_t& geometry_count, ResetGeometry reset_geometry,
         int maximum_depth, size_t maximum_children) {
-    if (!CanReadGuiObject(object) || depth > maximum_depth ||
-        !g_unified_ui.trampoline) {
-        return;
-    }
-
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    int& width = GuiField<int>(object, GuiObjectField::width);
-    int& height = GuiField<int>(object, GuiObjectField::height);
-    const RectI viewport = AspectFitLegacyCanvas(
-        static_cast<int>(g_unified_ui.width),
-        static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        if (!PrepareAspectFitRoot(reset_geometry, object)) {
-            return;
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
         }
-        width = viewport.width;
-        height = viewport.height;
-        original(object, viewport.x, viewport.y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            geometry, GeometryCapacity, geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport.width,
-                           LegacyCanvas::width);
-            height = MulDiv(native->height, viewport.height,
-                            LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport.width, LegacyCanvas::width),
-                MulDiv(native->y, viewport.height, LegacyCanvas::height));
-        }
-    }
-    RememberProcessedLayoutObject(object);
 
-    void* child = GuiPointer(object, GuiObjectField::first_child);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < maximum_children) {
-        void* next = GuiPointer(child, GuiObjectField::next_sibling);
-        ScaleAspectFitSubtree(
-            child, depth + 1, geometry, geometry_count, reset_geometry,
-            maximum_depth, maximum_children);
-        child = next;
-    }
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        int& width = GuiField<int>(object, GuiObjectField::width);
+        int& height = GuiField<int>(object, GuiObjectField::height);
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            if (!PrepareAspectFitRoot(reset_geometry, object)) {
+                return false;
+            }
+            width = viewport.width;
+            height = viewport.height;
+            original(object, viewport.x, viewport.y);
+        } else {
+            TitleNativeGeometry* native = RememberGeometry(
+                geometry, GeometryCapacity, geometry_count, object);
+            if (native) {
+                width = MulDiv(native->width, viewport.width,
+                               LegacyCanvas::width);
+                height = MulDiv(native->height, viewport.height,
+                                LegacyCanvas::height);
+                original(object,
+                    MulDiv(native->x, viewport.width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport.height, LegacyCanvas::height));
+            }
+        }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
+
+    };
+    VisitGuiSubtree(object, depth, maximum_depth, maximum_children, enter, leave);
 }
 
 void ResetEndGameSummaryGeometry(void* root) {
@@ -2172,45 +2157,44 @@ void RefreshEndGameCreditsBeforeDraw() {
 }
 
 void ScaleEndGameSummarySubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    int& width = GuiField<int>(object, GuiObjectField::width);
-    int& height = GuiField<int>(object, GuiObjectField::height);
-    const RectI viewport = AspectFitLegacyCanvas(
-        static_cast<int>(g_unified_ui.width),
-        static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetEndGameSummaryGeometry(object);
-        width = viewport.width;
-        height = viewport.height;
-        original(object, viewport.x, viewport.y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_end_game_summary_geometry,
-            std::size(g_end_game_summary_geometry),
-            g_end_game_summary_geometry_count, object);
-        if (native) {
-            RememberEndGameCreditMotion(object, native);
-            width = MulDiv(native->width, viewport.width,
-                           LegacyCanvas::width);
-            height = MulDiv(native->height, viewport.height,
-                            LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport.width, LegacyCanvas::width),
-                MulDiv(native->y, viewport.height, LegacyCanvas::height));
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
         }
-    }
-    RememberProcessedLayoutObject(object);
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        int& width = GuiField<int>(object, GuiObjectField::width);
+        int& height = GuiField<int>(object, GuiObjectField::height);
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            ResetEndGameSummaryGeometry(object);
+            width = viewport.width;
+            height = viewport.height;
+            original(object, viewport.x, viewport.y);
+        } else {
+            TitleNativeGeometry* native = RememberGeometry(
+                g_end_game_summary_geometry,
+                std::size(g_end_game_summary_geometry),
+                g_end_game_summary_geometry_count, object);
+            if (native) {
+                RememberEndGameCreditMotion(object, native);
+                width = MulDiv(native->width, viewport.width,
+                               LegacyCanvas::width);
+                height = MulDiv(native->height, viewport.height,
+                                LegacyCanvas::height);
+                original(object,
+                    MulDiv(native->x, viewport.width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport.height, LegacyCanvas::height));
+            }
+        }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = GuiPointer(object, GuiObjectField::first_child);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 16) {
-        void* next = GuiPointer(child, GuiObjectField::next_sibling);
-        ScaleEndGameSummarySubtree(child, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 8, 16, enter, leave);
 }
 
 void ResetArtistProfileGeometry(void* root) {
@@ -2299,8 +2283,8 @@ void CorrectArtistRadarVertices() {
     const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
         AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                               static_cast<int>(g_unified_ui.height));
-    const float scale_x = static_cast<float>(viewport_width) / 800.0f;
-    const float scale_y = static_cast<float>(viewport_height) / 600.0f;
+    const float scale_x = static_cast<float>(viewport_width) / static_cast<float>(LegacyCanvas::width);
+    const float scale_y = static_cast<float>(viewport_height) / static_cast<float>(LegacyCanvas::height);
     const auto transform_x = [&](float raw_x) {
         return root_x + card_x + (raw_x - card_x) * scale_x;
     };
@@ -2841,48 +2825,47 @@ bool IsAirportAirplaneGeometry(const TitleNativeGeometry* native) {
 }
 
 void ScaleAirportSelectionSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    int& width = GuiField<int>(object, GuiObjectField::width);
-    int& height = GuiField<int>(object, GuiObjectField::height);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetAirportSelectionGeometry(object);
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_airport_selection_geometry,
-            std::size(g_airport_selection_geometry),
-            g_airport_selection_geometry_count, object);
-        if (native) {
-            if (IsAirportAirplaneGeometry(native)) {
-                width = native->width;
-                height = native->height;
-                original(object, native->x, native->y);
-            } else {
-                width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-                height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-                original(object,
-                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
+        }
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        int& width = GuiField<int>(object, GuiObjectField::width);
+        int& height = GuiField<int>(object, GuiObjectField::height);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            ResetAirportSelectionGeometry(object);
+            width = viewport_width;
+            height = viewport_height;
+            original(object, viewport_x, viewport_y);
+        } else {
+            TitleNativeGeometry* native = RememberGeometry(
+                g_airport_selection_geometry,
+                std::size(g_airport_selection_geometry),
+                g_airport_selection_geometry_count, object);
+            if (native) {
+                if (IsAirportAirplaneGeometry(native)) {
+                    width = native->width;
+                    height = native->height;
+                    original(object, native->x, native->y);
+                } else {
+                    width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                    height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+                    original(object,
+                        MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                        MulDiv(native->y, viewport_height, LegacyCanvas::height));
+                }
             }
         }
-    }
-    RememberProcessedLayoutObject(object);
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = GuiPointer(object, GuiObjectField::first_child);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 256) {
-        void* next = GuiPointer(child, GuiObjectField::next_sibling);
-        ScaleAirportSelectionSubtree(child, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 8, 256, enter, leave);
 }
 
 void ResetStudioEventListGeometry(void* root) {
@@ -3002,48 +2985,45 @@ void ScaleStudioEventDropdownSubtree(void* object,
                                      int native_root_x,
                                      int native_root_y,
                                      int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 2 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        width = MulDiv(layout.native_width,
-            viewport_width, LegacyCanvas::width);
-        height = MulDiv(layout.native_height,
-            viewport_height, LegacyCanvas::height);
-        original(object,
-            viewport_x + MulDiv(native_root_x, viewport_width, LegacyCanvas::width),
-            viewport_y + MulDiv(native_root_y, viewport_height, LegacyCanvas::height));
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            layout.geometry,
-            std::size(layout.geometry),
-            layout.geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
         }
-    }
-    RememberProcessedLayoutObject(object);
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto* bytes = static_cast<unsigned char*>(object);
+        int& width = *reinterpret_cast<int*>(bytes + 0x88);
+        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            width = MulDiv(layout.native_width,
+                viewport_width, LegacyCanvas::width);
+            height = MulDiv(layout.native_height,
+                viewport_height, LegacyCanvas::height);
+            original(object,
+                viewport_x + MulDiv(native_root_x, viewport_width, LegacyCanvas::width),
+                viewport_y + MulDiv(native_root_y, viewport_height, LegacyCanvas::height));
+        } else {
+            TitleNativeGeometry* native = RememberGeometry(
+                layout.geometry,
+                std::size(layout.geometry),
+                layout.geometry_count, object);
+            if (native) {
+                width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+                original(object,
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            }
+        }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 16) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleStudioEventDropdownSubtree(
-            child, layout, native_root_x, native_root_y, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 2, 16, enter, leave);
 }
 
 void ResetTrainingMinigameGeometry(void* root) {
@@ -3143,52 +3123,50 @@ bool IsTrainingActivityPage(void* object, void* parent,
 }
 
 void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        // The minigame frame is authored at (187,126). Generic root-child
-        // anchoring may already have added the centred legacy-canvas offset;
-        // use the authored coordinates explicitly instead of scaling that
-        // output-space position a second time.
-        constexpr int kNativeX = 187;
-        constexpr int kNativeY = 126;
-        ResetTrainingMinigameGeometry(object);
-        width = MulDiv(426, viewport_width, LegacyCanvas::width);
-        height = MulDiv(369, viewport_height, LegacyCanvas::height);
-        original(object,
-            viewport_x + MulDiv(kNativeX, viewport_width, LegacyCanvas::width),
-            viewport_y + MulDiv(kNativeY, viewport_height, LegacyCanvas::height));
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_training_minigame_geometry,
-            std::size(g_training_minigame_geometry),
-            g_training_minigame_geometry_count, object);
-        if (native) {
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
         }
-    }
-    RememberProcessedLayoutObject(object);
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto* bytes = static_cast<unsigned char*>(object);
+        int& width = *reinterpret_cast<int*>(bytes + 0x88);
+        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            // The minigame frame is authored at (187,126). Generic root-child
+            // anchoring may already have added the centred legacy-canvas offset;
+            // use the authored coordinates explicitly instead of scaling that
+            // output-space position a second time.
+            constexpr int kNativeX = 187;
+            constexpr int kNativeY = 126;
+            ResetTrainingMinigameGeometry(object);
+            width = MulDiv(426, viewport_width, LegacyCanvas::width);
+            height = MulDiv(369, viewport_height, LegacyCanvas::height);
+            original(object,
+                viewport_x + MulDiv(kNativeX, viewport_width, LegacyCanvas::width),
+                viewport_y + MulDiv(kNativeY, viewport_height, LegacyCanvas::height));
+        } else {
+            TitleNativeGeometry* native = RememberGeometry(
+                g_training_minigame_geometry,
+                std::size(g_training_minigame_geometry),
+                g_training_minigame_geometry_count, object);
+            if (native) {
+                width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+                original(object,
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            }
+        }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 64) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleTrainingMinigameSubtree(child, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 8, 64, enter, leave);
 }
 
 void ScaleTrainingActivitySubtree(void* object, int depth = 0) {
@@ -3222,39 +3200,37 @@ void ResetTitleTutorialBubbleGeometry(void* bubble) {
 }
 
 void ScaleTitleTutorialBubbleSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 4 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    TitleNativeGeometry* native = RememberGeometry(
-        g_title_tutorial_bubble_geometry,
-        std::size(g_title_tutorial_bubble_geometry),
-        g_title_tutorial_bubble_geometry_count, object);
-    if (native) {
-        width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-        height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-        const int scaled_x = MulDiv(native->x, viewport_width, LegacyCanvas::width);
-        const int scaled_y = MulDiv(native->y, viewport_height, LegacyCanvas::height);
-        original(object,
-            depth == 0 ? viewport_x + scaled_x : scaled_x,
-            depth == 0 ? viewport_y + scaled_y : scaled_y);
-    }
-    RememberProcessedLayoutObject(object);
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
+        }
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto* bytes = static_cast<unsigned char*>(object);
+        int& width = *reinterpret_cast<int*>(bytes + 0x88);
+        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_title_tutorial_bubble_geometry,
+            std::size(g_title_tutorial_bubble_geometry),
+            g_title_tutorial_bubble_geometry_count, object);
+        if (native) {
+            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            const int scaled_x = MulDiv(native->x, viewport_width, LegacyCanvas::width);
+            const int scaled_y = MulDiv(native->y, viewport_height, LegacyCanvas::height);
+            original(object,
+                depth == 0 ? viewport_x + scaled_x : scaled_x,
+                depth == 0 ? viewport_y + scaled_y : scaled_y);
+        }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 16) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleTitleTutorialBubbleSubtree(child, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 4, 16, enter, leave);
 }
 
 void ResetTitleTutorialQuestionGeometry(void* root) {
@@ -3336,63 +3312,60 @@ bool IsAnnouncementDescendant(void* object) {
 }
 
 void ScaleAnnouncementSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 6 || !g_unified_ui.trampoline) {
-        return;
-    }
-    const bool owns_scaling_guard = depth == 0;
-    if (owns_scaling_guard) {
-        g_scaling_announcement_subtree = true;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        ResetAnnouncementGeometry(object);
-        const size_t artist_count = DetectAnnouncementArtistCount(object);
-        if (artist_count != g_announcement_artist_count) {
-            g_announcement_artist_count = artist_count;
-            Log("Unified UI announcement artist slots=%zu", artist_count);
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
         }
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        TitleNativeGeometry* native = RememberGeometry(
-            g_announcement_geometry, std::size(g_announcement_geometry),
-            g_announcement_geometry_count, object);
-        if (native) {
-            // The first result caption is left at its construction position;
-            // unlike the later captions the game never issues its final Move.
-            if (depth == 1 && native->x == 0 && native->y == 0 &&
-                native->width == 145 && native->height == 20 &&
-                *(bytes + 0x99) != 0) {
-                GetFirstAnnouncementCaptionPosition(
-                    g_announcement_artist_count, native->x, native->y);
+        const bool owns_scaling_guard = depth == 0;
+        if (owns_scaling_guard) {
+            g_scaling_announcement_subtree = true;
+        }
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto* bytes = static_cast<unsigned char*>(object);
+        int& width = *reinterpret_cast<int*>(bytes + 0x88);
+        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            ResetAnnouncementGeometry(object);
+            const size_t artist_count = DetectAnnouncementArtistCount(object);
+            if (artist_count != g_announcement_artist_count) {
+                g_announcement_artist_count = artist_count;
+                Log("Unified UI announcement artist slots=%zu", artist_count);
             }
-            width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(object,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            width = viewport_width;
+            height = viewport_height;
+            original(object, viewport_x, viewport_y);
+        } else {
+            TitleNativeGeometry* native = RememberGeometry(
+                g_announcement_geometry, std::size(g_announcement_geometry),
+                g_announcement_geometry_count, object);
+            if (native) {
+                // The first result caption is left at its construction position;
+                // unlike the later captions the game never issues its final Move.
+                if (depth == 1 && native->x == 0 && native->y == 0 &&
+                    native->width == 145 && native->height == 20 &&
+                    *(bytes + 0x99) != 0) {
+                    GetFirstAnnouncementCaptionPosition(
+                        g_announcement_artist_count, native->x, native->y);
+                }
+                width = MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                height = MulDiv(native->height, viewport_height, LegacyCanvas::height);
+                original(object,
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            }
         }
-    }
-    RememberProcessedLayoutObject(object);
-
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 128) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScaleAnnouncementSubtree(child, depth + 1);
-        child = next;
-    }
-    if (owns_scaling_guard) {
-        g_scaling_announcement_subtree = false;
-    }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
+        if (node_depth == 0) {
+            g_scaling_announcement_subtree = false;
+        }
+    };
+    VisitGuiSubtree(object, depth, 6, 128, enter, leave);
 }
 
 bool IsPhotoAlbumScreenVisible() {
@@ -3500,11 +3473,11 @@ bool TransformPhotoAlbumCarouselFrame(void* object, void* call_site,
             g_unified_ui.photo_album_animation_direction =
                 x >= current_x ? 1 : -1;
         }
-        const int native_source_x = MulDiv(current_x, 800, viewport_width);
+        const int native_source_x = MulDiv(current_x, LegacyCanvas::width, viewport_width);
         sequence->target_native_x = native_source_x +
             g_unified_ui.photo_album_animation_direction * 60;
         sequence->target_native_y = MulDiv(
-            current_y, 600, viewport_height);
+            current_y, LegacyCanvas::height, viewport_height);
     }
 
     // The game's interpolator mixes a scaled source with a native target.
@@ -3530,39 +3503,37 @@ bool TransformPhotoAlbumCarouselFrame(void* object, void* call_site,
 }
 
 void ScalePhotoAlbumSubtree(void* object, int depth = 0) {
-    if (!CanReadGuiObject(object) || depth > 8 || !g_unified_ui.trampoline) {
-        return;
-    }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
-    auto* bytes = static_cast<unsigned char*>(object);
-    int& x = *reinterpret_cast<int*>(bytes + 0x80);
-    int& y = *reinterpret_cast<int*>(bytes + 0x84);
-    int& width = *reinterpret_cast<int*>(bytes + 0x88);
-    int& height = *reinterpret_cast<int*>(bytes + 0x8C);
-    const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-        AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                              static_cast<int>(g_unified_ui.height));
-    if (depth == 0) {
-        width = viewport_width;
-        height = viewport_height;
-        original(object, viewport_x, viewport_y);
-    } else {
-        const int scaled_x = MulDiv(x, viewport_width, LegacyCanvas::width);
-        const int scaled_y = MulDiv(y, viewport_height, LegacyCanvas::height);
-        width = MulDiv(width, viewport_width, LegacyCanvas::width);
-        height = MulDiv(height, viewport_height, LegacyCanvas::height);
-        original(object, scaled_x, scaled_y);
-    }
-    RememberProcessedLayoutObject(object);
+    auto enter = [&](void* object, int depth) -> bool {
+        if (!g_unified_ui.trampoline) {
+            return false;
+        }
+        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto* bytes = static_cast<unsigned char*>(object);
+        int& x = *reinterpret_cast<int*>(bytes + 0x80);
+        int& y = *reinterpret_cast<int*>(bytes + 0x84);
+        int& width = *reinterpret_cast<int*>(bytes + 0x88);
+        int& height = *reinterpret_cast<int*>(bytes + 0x8C);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        if (depth == 0) {
+            width = viewport_width;
+            height = viewport_height;
+            original(object, viewport_x, viewport_y);
+        } else {
+            const int scaled_x = MulDiv(x, viewport_width, LegacyCanvas::width);
+            const int scaled_y = MulDiv(y, viewport_height, LegacyCanvas::height);
+            width = MulDiv(width, viewport_width, LegacyCanvas::width);
+            height = MulDiv(height, viewport_height, LegacyCanvas::height);
+            original(object, scaled_x, scaled_y);
+        }
+        RememberProcessedLayoutObject(object);
+        return true;
+    };
+    auto leave = [&](void*, int node_depth) {
 
-    void* child = *reinterpret_cast<void**>(bytes + 0xF4);
-    size_t visited = 0;
-    while (CanReadGuiObject(child) && visited++ < 512) {
-        void* next = *reinterpret_cast<void**>(
-            static_cast<unsigned char*>(child) + 0xF8);
-        ScalePhotoAlbumSubtree(child, depth + 1);
-        child = next;
-    }
+    };
+    VisitGuiSubtree(object, depth, 8, 512, enter, leave);
 }
 
 bool IsNearAuthoredCoordinate(int value, int expected) {
@@ -3692,8 +3663,8 @@ bool IsSmallDialoguePortrait(void* object, void* parent,
 
 void PlaceCenteredLegacyOverlay(int legacy_x, int legacy_y,
                                 int& x, int& y) {
-    x = legacy_x + (static_cast<int>(g_unified_ui.width) - 800) / 2;
-    y = legacy_y + (static_cast<int>(g_unified_ui.height) - 600) / 2;
+    x = legacy_x + (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
+    y = legacy_y + (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
 }
 
 void TransformTitleTutorialProfileDropdown(void* object, int& x, int& y) {
@@ -4701,6 +4672,263 @@ bool ReflowControllerOwnedPages(void* child, void* parent, int width, int height
                                     child, parent, width, height);
 }
 
+struct PageReflowContext {
+    void* child;
+    void* root;
+    int& width;
+    int& height;
+};
+
+bool ReflowEndGameDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (ReflowEndGameSummaryPage(child, root, width, height)) {
+        // Discovery fits once; refresh preserves live credit scrolling.
+        return true;
+    }
+    return false;
+}
+
+bool ReflowTitleDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (child == g_unified_ui.title_screen_root &&
+               IsTitleScreenVisible()) {
+        // The attract animation can restore the root rectangle or replace
+        // individual visual children after the first layout pass. Reapply
+        // the stored native geometry idempotently once per refresh.
+        ScaleTitleScreenSubtree(child);
+        RememberProcessedLayoutObject(child);
+        return true;
+    } else if (IsTitleScreenRoot(child, root, width, height)) {
+        if (g_unified_ui.title_screen_root != child) {
+            ResetTitleNativeGeometry(child);
+        }
+        g_unified_ui.title_screen_root = child;
+        RememberLayoutRoot(child);
+        ScaleTitleScreenSubtree(child);
+        RememberProcessedLayoutObject(child);
+        if (!g_unified_ui.title_screen_logged) {
+            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
+            Log("Unified UI title screen aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+                child, viewport_x, viewport_y,
+                viewport_width, viewport_height);
+            g_unified_ui.title_screen_logged = true;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool ReflowStaticDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (ReflowStaticAspectFitPage(child, root, width, height)) {
+        // The shared dispatcher has scaled and marked this static page.
+        return true;
+    }
+    return false;
+}
+
+bool ReflowCompanyNavigationDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (child == g_company_navigation_root) {
+        // The controller moves the selected section icon into the title
+        // slot. Do not replay the discovery snapshot during maintenance.
+        RememberProcessedLayoutObject(child);
+        return true;
+    } else if (IsCompanyNavigationOverlay(child, root, width, height)) {
+        ResetCompanyNavigationGeometry(child);
+        RememberLayoutRoot(child);
+        ScaleCompanyNavigationSubtree(child);
+        RememberProcessedLayoutObject(child);
+        return true;
+    }
+    return false;
+}
+
+bool ReflowCompanyRevenueDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (child == g_company_revenue_root) {
+        // Revenue bars are controller-sized after the report is loaded.
+        // Do not replay the resource template during maintenance or their
+        // live heights would be replaced with the cached startup values.
+        RememberProcessedLayoutObject(child);
+        return true;
+    } else if (IsCompanyRevenuePage(child, root, width, height)) {
+        const bool chart_ready = IsCompanyRevenueChartReady(child);
+        ResetCompanyRevenueGeometry(child);
+        RememberLayoutRoot(child);
+        ScaleCompanyRevenueSubtree(child);
+        // Scale the page immediately. The controller has not populated
+        // these ten placeholder bars yet, so leave just those leaves in
+        // native coordinates until their first real values arrive.
+        if (!chart_ready) {
+            RestoreCompanyRevenueChartToNative();
+        }
+        RememberProcessedLayoutObject(child);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        Log("Unified UI company revenue aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+            child, viewport_x, viewport_y,
+            viewport_width, viewport_height);
+        return true;
+    }
+    return false;
+}
+
+bool ReflowCompanySectionsDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (CompanySectionLayout* company_section =
+                   FindCompanySectionLayout(child)) {
+        // Controllers own live content on these cached pages. They are
+        // already fitted; HookGuiMove transforms later mutations.
+        RememberProcessedLayoutObject(company_section->root);
+        return true;
+    } else if (IsCompanySectionPage(child, root, width, height)) {
+        if (CompanySectionLayout* company_section =
+                RegisterCompanySectionLayout(child)) {
+            RememberLayoutRoot(child);
+            ScaleCompanySectionSubtree(*company_section, child);
+            RememberProcessedLayoutObject(child);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool ReflowControllerOwnedDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (ReflowControllerOwnedPages(child, root, width, height)) {
+        // No subtree replay during controller-owned page maintenance.
+        return true;
+    }
+    return false;
+}
+
+bool ReflowTrainingFrameDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (child == g_training_minigame_root) {
+        // The progress control interpolates its marker internally. Do not
+        // replay Move across the complete subtree during the one-second
+        // maintenance pass: doing so interrupts that interpolation and
+        // can make the marker jump to the midpoint for one frame. Initial
+        // discovery performs the full fit; HookGuiMove maintains later
+        // game-driven updates.
+        RememberProcessedLayoutObject(child);
+        return true;
+    } else if (IsTrainingMinigamePanel(child, root, width, height)) {
+        ResetTrainingMinigameGeometry(child);
+        ScaleTrainingMinigameSubtree(child);
+        RememberProcessedLayoutObject(child);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        Log("Unified UI training minigame aspect-fit self=%p 426x369 -> %d,%d %dx%d",
+            child,
+            viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
+            viewport_y + MulDiv(126, viewport_height, LegacyCanvas::height),
+            MulDiv(426, viewport_width, LegacyCanvas::width),
+            MulDiv(369, viewport_height, LegacyCanvas::height));
+        return true;
+    }
+    return false;
+}
+
+bool ReflowTrainingActivitiesDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (IsTrainingActivityRoot(child)) {
+        // Activity pages are fully transformed when first discovered.
+        // Rewalking them here would also restart animations owned by
+        // their custom controls.
+        RememberProcessedLayoutObject(child);
+        return true;
+    } else if (IsTrainingActivityPage(child, root, width, height)) {
+        ScaleTrainingActivitySubtree(child);
+        RememberProcessedLayoutObject(child);
+        Log("Unified UI training activity page aspect-fit self=%p",
+            child);
+        return true;
+    }
+    return false;
+}
+
+bool ReflowAnnouncementDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (child == g_announcement_root &&
+               IsCachedAnnouncementRootValid()) {
+        ScaleAnnouncementSubtree(child);
+        RememberProcessedLayoutObject(child);
+        return true;
+    } else if (IsAnnouncementControlRoot(child, root, width, height)) {
+        ResetAnnouncementGeometry(child);
+        RememberLayoutRoot(child);
+        ScaleAnnouncementSubtree(child);
+        RememberProcessedLayoutObject(child);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        Log("Unified UI announcement aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+            child, viewport_x, viewport_y,
+            viewport_width, viewport_height);
+        return true;
+    }
+    return false;
+}
+
+bool ReflowPhotoAlbumDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (IsPhotoAlbumRoot(child, root, width, height)) {
+        g_unified_ui.photo_album_root = child;
+        RememberLayoutRoot(child);
+        ScalePhotoAlbumSubtree(child);
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        Log("Unified UI photo album aspect-fit self=%p 800x600 -> %d,%d %dx%d",
+            child, viewport_x, viewport_y,
+            viewport_width, viewport_height);
+        return true;
+    }
+    return false;
+}
+
+bool ReflowAwardsDispatch(PageReflowContext& context) {
+    auto& [child, root, width, height] = context;
+    if (child == g_awards_ceremony_root) {
+        LayoutAwardsCeremonyOverlayRoot(child);
+        return true;
+    } else if (IsAwardsCeremonyOverlayRoot(
+                   child, root, width, height)) {
+        g_awards_ceremony_root = child;
+        RememberLayoutRoot(child);
+        LayoutAwardsCeremonyOverlayRoot(child);
+        LogAwardsCeremonyLayoutOnce(child);
+        return true;
+    }
+    return false;
+}
+
+bool DispatchAspectFitPageReflow(void* child, void* root, int& width, int& height) {
+    using Handler = bool (*)(PageReflowContext&);
+    static constexpr Handler handlers[] = {
+        ReflowEndGameDispatch,
+        ReflowTitleDispatch,
+        ReflowStaticDispatch,
+        ReflowCompanyNavigationDispatch,
+        ReflowCompanyRevenueDispatch,
+        ReflowCompanySectionsDispatch,
+        ReflowControllerOwnedDispatch,
+        ReflowTrainingFrameDispatch,
+        ReflowTrainingActivitiesDispatch,
+        ReflowAnnouncementDispatch,
+        ReflowPhotoAlbumDispatch,
+        ReflowAwardsDispatch,
+    };
+    PageReflowContext context{child, root, width, height};
+    return DispatchFirstHandled(handlers, context);
+}
+
 void ReflowExistingRootChildren(void* root, int depth = 0) {
     GuiObjectReadBatch read_batch;
     if (!CanReadGuiObject(root) || depth > 8 || !g_unified_ui.trampoline) {
@@ -4790,144 +5018,8 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                     new_x, new_y);
                 g_unified_ui.in_game_cg_item_notice_logged = true;
             }
-        } else if (ReflowEndGameSummaryPage(child, root, width, height)) {
-            // Discovery fits once; refresh preserves live credit scrolling.
-        } else if (child == g_unified_ui.title_screen_root &&
-                   IsTitleScreenVisible()) {
-            // The attract animation can restore the root rectangle or replace
-            // individual visual children after the first layout pass. Reapply
-            // the stored native geometry idempotently once per refresh.
-            ScaleTitleScreenSubtree(child);
-            RememberProcessedLayoutObject(child);
-        } else if (IsTitleScreenRoot(child, root, width, height)) {
-            if (g_unified_ui.title_screen_root != child) {
-                ResetTitleNativeGeometry(child);
-            }
-            g_unified_ui.title_screen_root = child;
-            RememberLayoutRoot(child);
-            ScaleTitleScreenSubtree(child);
-            RememberProcessedLayoutObject(child);
-            if (!g_unified_ui.title_screen_logged) {
-                const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-                    AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                          static_cast<int>(g_unified_ui.height));
-                Log("Unified UI title screen aspect-fit self=%p 800x600 -> %d,%d %dx%d",
-                    child, viewport_x, viewport_y,
-                    viewport_width, viewport_height);
-                g_unified_ui.title_screen_logged = true;
-            }
-        } else if (ReflowStaticAspectFitPage(child, root, width, height)) {
-            // The shared dispatcher has scaled and marked this static page.
-        } else if (child == g_company_navigation_root) {
-            // The controller moves the selected section icon into the title
-            // slot. Do not replay the discovery snapshot during maintenance.
-            RememberProcessedLayoutObject(child);
-        } else if (IsCompanyNavigationOverlay(child, root, width, height)) {
-            ResetCompanyNavigationGeometry(child);
-            RememberLayoutRoot(child);
-            ScaleCompanyNavigationSubtree(child);
-            RememberProcessedLayoutObject(child);
-        } else if (child == g_company_revenue_root) {
-            // Revenue bars are controller-sized after the report is loaded.
-            // Do not replay the resource template during maintenance or their
-            // live heights would be replaced with the cached startup values.
-            RememberProcessedLayoutObject(child);
-        } else if (IsCompanyRevenuePage(child, root, width, height)) {
-            const bool chart_ready = IsCompanyRevenueChartReady(child);
-            ResetCompanyRevenueGeometry(child);
-            RememberLayoutRoot(child);
-            ScaleCompanyRevenueSubtree(child);
-            // Scale the page immediately. The controller has not populated
-            // these ten placeholder bars yet, so leave just those leaves in
-            // native coordinates until their first real values arrive.
-            if (!chart_ready) {
-                RestoreCompanyRevenueChartToNative();
-            }
-            RememberProcessedLayoutObject(child);
-            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                      static_cast<int>(g_unified_ui.height));
-            Log("Unified UI company revenue aspect-fit self=%p 800x600 -> %d,%d %dx%d",
-                child, viewport_x, viewport_y,
-                viewport_width, viewport_height);
-        } else if (CompanySectionLayout* company_section =
-                       FindCompanySectionLayout(child)) {
-            // Controllers own live content on these cached pages. They are
-            // already fitted; HookGuiMove transforms later mutations.
-            RememberProcessedLayoutObject(company_section->root);
-        } else if (IsCompanySectionPage(child, root, width, height)) {
-            if (CompanySectionLayout* company_section =
-                    RegisterCompanySectionLayout(child)) {
-                RememberLayoutRoot(child);
-                ScaleCompanySectionSubtree(*company_section, child);
-                RememberProcessedLayoutObject(child);
-            }
-        } else if (ReflowControllerOwnedPages(child, root, width, height)) {
-            // No subtree replay during controller-owned page maintenance.
-        } else if (child == g_training_minigame_root) {
-            // The progress control interpolates its marker internally. Do not
-            // replay Move across the complete subtree during the one-second
-            // maintenance pass: doing so interrupts that interpolation and
-            // can make the marker jump to the midpoint for one frame. Initial
-            // discovery performs the full fit; HookGuiMove maintains later
-            // game-driven updates.
-            RememberProcessedLayoutObject(child);
-        } else if (IsTrainingMinigamePanel(child, root, width, height)) {
-            ResetTrainingMinigameGeometry(child);
-            ScaleTrainingMinigameSubtree(child);
-            RememberProcessedLayoutObject(child);
-            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                      static_cast<int>(g_unified_ui.height));
-            Log("Unified UI training minigame aspect-fit self=%p 426x369 -> %d,%d %dx%d",
-                child,
-                viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
-                viewport_y + MulDiv(126, viewport_height, LegacyCanvas::height),
-                MulDiv(426, viewport_width, LegacyCanvas::width),
-                MulDiv(369, viewport_height, LegacyCanvas::height));
-        } else if (IsTrainingActivityRoot(child)) {
-            // Activity pages are fully transformed when first discovered.
-            // Rewalking them here would also restart animations owned by
-            // their custom controls.
-            RememberProcessedLayoutObject(child);
-        } else if (IsTrainingActivityPage(child, root, width, height)) {
-            ScaleTrainingActivitySubtree(child);
-            RememberProcessedLayoutObject(child);
-            Log("Unified UI training activity page aspect-fit self=%p",
-                child);
-        } else if (child == g_announcement_root &&
-                   IsCachedAnnouncementRootValid()) {
-            ScaleAnnouncementSubtree(child);
-            RememberProcessedLayoutObject(child);
-        } else if (IsAnnouncementControlRoot(child, root, width, height)) {
-            ResetAnnouncementGeometry(child);
-            RememberLayoutRoot(child);
-            ScaleAnnouncementSubtree(child);
-            RememberProcessedLayoutObject(child);
-            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                      static_cast<int>(g_unified_ui.height));
-            Log("Unified UI announcement aspect-fit self=%p 800x600 -> %d,%d %dx%d",
-                child, viewport_x, viewport_y,
-                viewport_width, viewport_height);
-        } else if (IsPhotoAlbumRoot(child, root, width, height)) {
-            g_unified_ui.photo_album_root = child;
-            RememberLayoutRoot(child);
-            ScalePhotoAlbumSubtree(child);
-            const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                      static_cast<int>(g_unified_ui.height));
-            Log("Unified UI photo album aspect-fit self=%p 800x600 -> %d,%d %dx%d",
-                child, viewport_x, viewport_y,
-                viewport_width, viewport_height);
-        } else if (child == g_awards_ceremony_root) {
-            LayoutAwardsCeremonyOverlayRoot(child);
-        } else if (IsAwardsCeremonyOverlayRoot(
-                       child, root, width, height)) {
-            g_awards_ceremony_root = child;
-            RememberLayoutRoot(child);
-            LayoutAwardsCeremonyOverlayRoot(child);
-            LogAwardsCeremonyLayoutOnce(child);
+        } else if (DispatchAspectFitPageReflow(child, root, width, height)) {
+            // The first matching page handler owns discovery/maintenance.
         } else if (IsFullscreenLeafSurface(child, root, width, height)) {
             const int old_width = width;
             const int old_height = height;
@@ -5014,8 +5106,8 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             if (!small_single_overlay) {
                 RememberGroupCanvas(child);
                 RememberProcessedLayoutObject(child);
-                const int page_x = (static_cast<int>(g_unified_ui.width) - 800) / 2;
-                const int page_y = (static_cast<int>(g_unified_ui.height) - 600) / 2;
+                const int page_x = (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
+                const int page_y = (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
                 original(child, page_x, page_y);
                 child = next;
                 continue;
@@ -5027,10 +5119,10 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                 RememberLayoutRoot(child);
                 const int center_x_twice = only_x * 2 + only_width;
                 const int center_y_twice = only_y * 2 + only_height;
-                const bool central_overlay = center_x_twice >= (800 * 2) / 3 &&
-                    center_x_twice <= (800 * 4) / 3 &&
-                    center_y_twice >= (600 * 2) / 3 &&
-                    center_y_twice <= (600 * 4) / 3;
+                const bool central_overlay = center_x_twice >= (LegacyCanvas::width * 2) / 3 &&
+                    center_x_twice <= (LegacyCanvas::width * 4) / 3 &&
+                    center_y_twice >= (LegacyCanvas::height * 2) / 3 &&
+                    center_y_twice <= (LegacyCanvas::height * 4) / 3;
                 if (central_overlay) {
                     RememberWorldRoot(child);
                 }
@@ -5062,9 +5154,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
                 // the controller's current origin once, then let its later
                 // absolute frames run in that translated coordinate space.
                 const int new_x = x +
-                    (static_cast<int>(g_unified_ui.width) - 800) / 2;
+                    (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
                 const int new_y = y +
-                    (static_cast<int>(g_unified_ui.height) - 600) / 2;
+                    (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
                 original(child, new_x, new_y);
                 RememberProcessedLayoutObject(child);
                 Log("Unified UI publication cover origin shifted self=%p rect=%d,%d %dx%d -> %d,%d",
@@ -5073,9 +5165,9 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
         } else if (IsEventPublicationPanel(child, root, width, height)) {
             if (!IsProcessedLayoutObject(child)) {
                 const int new_x = x +
-                    (static_cast<int>(g_unified_ui.width) - 800) / 2;
+                    (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
                 const int new_y = y +
-                    (static_cast<int>(g_unified_ui.height) - 600) / 2;
+                    (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
                 original(child, new_x, new_y);
                 RememberProcessedLayoutObject(child);
             }
@@ -5181,7 +5273,7 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
             RememberProcessedLayoutObject(child);
         } else if (!IsProcessedLayoutObject(child) &&
                    width >= 0 && height >= 0 && width < 760 && height < 560 &&
-                   x >= 0 && x <= 800 && y >= 0 && y <= 600) {
+                   x >= 0 && x <= LegacyCanvas::width && y >= 0 && y <= LegacyCanvas::height) {
             const int old_x = x;
             const int old_y = y;
             int new_x = x;
@@ -5406,6 +5498,557 @@ void RefreshInGameCGOverlays(bool discover_surfaces) {
     }
 }
 
+struct PageMoveContext {
+    void* self;
+    void* parent;
+    int& x;
+    int& y;
+    GuiMoveFn original;
+    HMODULE executable;
+    void* immediate_call;
+};
+
+bool MoveEndGamePage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_end_game_summary_root) {
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        GuiField<int>(self, GuiObjectField::width) = viewport.width;
+        GuiField<int>(self, GuiObjectField::height) = viewport.height;
+        original(self, viewport.x, viewport.y);
+        return true;
+    }
+    if (parent && IsEndGameSummaryDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const RectI viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width),
+            static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_end_game_summary_geometry,
+            std::size(g_end_game_summary_geometry),
+            g_end_game_summary_geometry_count, self);
+        if (native) {
+            GuiField<int>(self, GuiObjectField::width) = MulDiv(
+                native->width, viewport.width, LegacyCanvas::width);
+            GuiField<int>(self, GuiObjectField::height) = MulDiv(
+                native->height, viewport.height, LegacyCanvas::height);
+            if (EndGameCreditMotionState* motion =
+                    RememberEndGameCreditMotion(self, native)) {
+                const int current_x =
+                    GuiField<int>(self, GuiObjectField::x);
+                const int current_y =
+                    GuiField<int>(self, GuiObjectField::y);
+                motion->native_x = ResolveNativeAnimationCoordinate(
+                    x, current_x, motion->native_x);
+                motion->native_y = ResolveNativeAnimationCoordinate(
+                    y, current_y, motion->native_y);
+                original(self,
+                    MulDiv(motion->native_x, viewport.width,
+                           LegacyCanvas::width),
+                    MulDiv(motion->native_y, viewport.height,
+                           LegacyCanvas::height));
+                return true;
+            }
+            original(self,
+                MulDiv(x, viewport.width, LegacyCanvas::width),
+                MulDiv(y, viewport.height, LegacyCanvas::height));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MoveTitlePage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_unified_ui.title_screen_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return true;
+    }
+    if (parent && IsTitleScreenDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberTitleNativeGeometry(self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+        }
+        if (IsTitleStripGeometry(native)) {
+            // The original title controller keeps one primary native x and
+            // derives the paired strip from it every update:
+            //   primary += direction * 2, wrapping at +/-1000;
+            //   follower = primary < 0 ? primary + 2000 : primary - 2000.
+            // Reading the transformed object x back into that controller moves
+            // its wrap boundary and breaks the pair. Reproduce the exact native
+            // state machine here, then transform both absolute native outputs
+            // once. The two authored strips therefore retain their identities,
+            // speed, separation, direction changes, and hand-off order.
+            const int input_x = x;
+            const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
+            const bool lead_strip =
+                native->x >= -1000 && native->x <= 1000;
+            RegisterTitleStrip(self, native);
+            if (lead_strip) {
+                const long long observed_delta =
+                    static_cast<long long>(input_x) - current_x;
+                if (observed_delta >= 1 && observed_delta <= 4) {
+                    g_title_strip_motion.native_step = 2;
+                } else if (observed_delta <= -1 && observed_delta >= -4) {
+                    g_title_strip_motion.native_step = -2;
+                } else if (input_x <= -990 && input_x >= -1010 &&
+                           current_x > 0) {
+                    g_title_strip_motion.native_step = 2;
+                } else if (input_x >= 990 && input_x <= 1010 &&
+                           current_x < 0) {
+                    g_title_strip_motion.native_step = -2;
+                }
+            }
+            const int native_x = lead_strip ?
+                g_title_strip_motion.primary_native_x :
+                g_title_strip_motion.follower_native_x;
+            x = MulDiv(native_x, viewport_width, LegacyCanvas::width);
+            y = MulDiv(native->y, viewport_height, LegacyCanvas::height);
+            original(self, x, y);
+            return true;
+        }
+        x = MulDiv(x, viewport_width, LegacyCanvas::width);
+        y = MulDiv(y, viewport_height, LegacyCanvas::height);
+        original(self, x, y);
+        return true;
+    }
+    return false;
+}
+
+bool MoveStaticPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    // Keep these static pages in their original dispatch order. Animated
+    // pages (including company navigation) stay in the specialised paths below.
+    const StaticPageMoveRule static_pages[] = {
+        {g_title_tutorial_root, g_title_tutorial_geometry,
+         std::size(g_title_tutorial_geometry), &g_title_tutorial_geometry_count},
+        {g_title_tutorial_question_root, g_title_tutorial_question_geometry,
+         std::size(g_title_tutorial_question_geometry),
+         &g_title_tutorial_question_geometry_count, 6},
+        {g_artist_profile_root, g_artist_profile_geometry,
+         std::size(g_artist_profile_geometry), &g_artist_profile_geometry_count},
+        {g_artist_contract_root, g_artist_contract_geometry,
+         std::size(g_artist_contract_geometry), &g_artist_contract_geometry_count},
+        {g_artist_signing_root, g_artist_signing_geometry,
+         std::size(g_artist_signing_geometry), &g_artist_signing_geometry_count},
+    };
+    if (ApplyStaticPageMove(static_pages, std::size(static_pages), self, parent,
+                            static_cast<int>(g_unified_ui.width),
+                            static_cast<int>(g_unified_ui.height), x, y,
+                            IsRepeatedObjectPosition)) {
+        original(self, x, y);
+        return true;
+    }
+    return false;
+}
+
+bool MoveCompanyNavigationPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_company_navigation_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return true;
+    }
+    if (parent && IsCompanyNavigationDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_company_navigation_geometry,
+            std::size(g_company_navigation_geometry),
+            g_company_navigation_geometry_count, self);
+        if (native) {
+            // Retain the live native interpolation result, not the resource's
+            // initial slot. The next animation must start at this position.
+            native->x = x;
+            native->y = y;
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            original(self,
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MoveCompanySectionPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (CompanySectionLayout* company_section =
+            FindCompanySectionLayout(self)) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return true;
+    }
+    if (parent) {
+        if (CompanySectionLayout* company_section =
+                FindCompanySectionLayoutForObject(self)) {
+            if (IsRepeatedObjectPosition(self, x, y)) {
+                original(self, x, y);
+                return true;
+            }
+            const auto [viewport_x, viewport_y,
+                        viewport_width, viewport_height] =
+                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                      static_cast<int>(g_unified_ui.height));
+            TitleNativeGeometry* native =
+                RememberDynamicCompanySectionGeometry(
+                    *company_section, self, x, y,
+                    viewport_width, viewport_height);
+            if (native) {
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width,
+                           LegacyCanvas::width);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native->height, viewport_height,
+                           LegacyCanvas::height);
+                original(self,
+                    MulDiv(x, viewport_width, LegacyCanvas::width),
+                    MulDiv(y, viewport_height, LegacyCanvas::height));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool MoveCompanyRevenuePage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_company_revenue_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return true;
+    }
+    if (parent && IsCompanyRevenueDescendant(self)) {
+        const auto* executable_bytes = reinterpret_cast<unsigned char*>(executable);
+        const bool bar_update = executable &&
+            (immediate_call == executable_bytes + 0x84D3C ||
+             immediate_call == executable_bytes + 0x84E0D);
+        TitleNativeGeometry* cached = FindGeometry(
+            g_company_revenue_geometry,
+            g_company_revenue_geometry_count, self);
+        if (!g_company_revenue_waiting_for_bars && cached && executable &&
+            immediate_call == executable_bytes + 0x84AB7 &&
+            IsCompanyRevenueChartColumnGeometry(cached)) {
+            // 00484A9F reads the first column's fitted width, although its
+            // spacing and origin remain native. Undo only that half-width.
+            const RectI viewport = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width),
+                static_cast<int>(g_unified_ui.height));
+            x = CorrectCompanyColumnCenter(x,
+                MulDiv(cached->width, viewport.width, LegacyCanvas::width),
+                cached->width);
+        }
+        if (g_company_revenue_waiting_for_bars && cached &&
+            IsCompanyRevenueChartMemberGeometry(self, cached)) {
+            // The report controller must see and update the chart in its
+            // authored coordinate system before the fitted geometry is
+            // committed. Passing these moves through lets it replace the
+            // ten full-height resource placeholders with real values.
+            original(self, x, y);
+            return true;
+        }
+        if (!bar_update && IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = cached ? cached : RememberGeometry(
+            g_company_revenue_geometry,
+            std::size(g_company_revenue_geometry),
+            g_company_revenue_geometry_count, self);
+        if (native) {
+            const bool live_bar = bar_update &&
+                IsCompanyRevenueBarGeometry(self, native) &&
+                ((x >= 12 && x <= 16) || (x >= 33 && x <= 37)) &&
+                y >= 0 && y <= 163;
+            if (live_bar) {
+                // 00484D15 resizes the bar before 00484D3C moves it.
+                // Retain that live height, including the one-pixel zero bar.
+                const int native_height =
+                    GuiField<int>(self, GuiObjectField::height);
+                native->x = x;
+                native->y = y;
+                native->height = native_height;
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width,
+                           LegacyCanvas::width);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native_height, viewport_height,
+                           LegacyCanvas::height);
+                original(self,
+                    MulDiv(x, viewport_width, LegacyCanvas::width),
+                    MulDiv(y, viewport_height, LegacyCanvas::height));
+                return true;
+            }
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            original(self,
+                MulDiv(x, viewport_width, LegacyCanvas::width),
+                MulDiv(y, viewport_height, LegacyCanvas::height));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MoveAirportPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_airport_selection_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        original(self, viewport_x, viewport_y);
+        return true;
+    }
+    if (parent && IsAirportSelectionDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_airport_selection_geometry,
+            std::size(g_airport_selection_geometry),
+            g_airport_selection_geometry_count, self);
+        if (native) {
+            if (IsAirportAirplaneGeometry(native)) {
+                // The route controller reads this same rectangle back while
+                // interpolating and deciding when the airplane is visible.
+                // Preserve native logical geometry; only rendering is scaled.
+                *reinterpret_cast<int*>(bytes + 0x88) = native->width;
+                *reinterpret_cast<int*>(bytes + 0x8C) = native->height;
+                original(self, x, y);
+            } else {
+                *reinterpret_cast<int*>(bytes + 0x88) =
+                    MulDiv(native->width, viewport_width, LegacyCanvas::width);
+                *reinterpret_cast<int*>(bytes + 0x8C) =
+                    MulDiv(native->height, viewport_height, LegacyCanvas::height);
+                original(self,
+                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MoveStudioPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    const StaticPageMoveRule studio_pages[] = {
+        {g_studio_event_list_root, g_studio_event_list_geometry,
+         std::size(g_studio_event_list_geometry), &g_studio_event_list_geometry_count,
+         8, PageMoveCoordinates::SubmittedNative},
+        {g_studio_event_editor_root, g_studio_event_editor_geometry,
+         std::size(g_studio_event_editor_geometry), &g_studio_event_editor_geometry_count,
+         8, PageMoveCoordinates::SubmittedNative},
+    };
+    if (ApplyStaticPageMove(studio_pages, std::size(studio_pages), self, parent,
+                            static_cast<int>(g_unified_ui.width),
+                            static_cast<int>(g_unified_ui.height), x, y,
+                            IsRepeatedObjectPosition)) {
+        original(self, x, y);
+        return true;
+    }
+    return false;
+}
+
+bool MoveTrainingFramePage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_training_minigame_root) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) =
+            MulDiv(426, viewport_width, LegacyCanvas::width);
+        *reinterpret_cast<int*>(bytes + 0x8C) =
+            MulDiv(369, viewport_height, LegacyCanvas::height);
+        original(self,
+            viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
+            viewport_y + MulDiv(126, viewport_height, LegacyCanvas::height));
+        return true;
+    }
+    if (parent && IsTrainingMinigameDescendant(self)) {
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_training_minigame_geometry,
+            std::size(g_training_minigame_geometry),
+            g_training_minigame_geometry_count, self);
+        if (native) {
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            // Training activities move prompts and judgement markers while
+            // they run. Scale the coordinates supplied by this update rather
+            // than replaying the first cached position, while retaining the
+            // cached authored size to avoid cumulative scaling.
+            // The timer's depletion is rendered inside a stationary control.
+            // Some updates echo its already-scaled position; scaling that
+            // value again causes a one-frame jump. Keep only the timer group
+            // on its cached authored anchor while other activity objects use
+            // their live coordinates.
+            const bool fixed_timer = IsTrainingTimerGeometry(native);
+            const int native_x = fixed_timer ? native->x : x;
+            const int native_y = fixed_timer ? native->y : y;
+            original(self,
+                MulDiv(native_x, viewport_width, LegacyCanvas::width),
+                MulDiv(native_y, viewport_height, LegacyCanvas::height));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MoveTrainingActivitiesPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    // Activity roots coexist and share a cache; preserve roots-first group
+    // dispatch rather than treating each root as an independent page rule.
+    const StaticPageMoveRule training_activities{
+        nullptr, g_training_activity_geometry,
+        std::size(g_training_activity_geometry), &g_training_activity_geometry_count,
+        10, PageMoveCoordinates::SubmittedNative};
+    if (ApplyPageGroupMove(training_activities, g_training_activity_roots,
+                            g_training_activity_root_count, self, parent,
+                            static_cast<int>(g_unified_ui.width),
+                            static_cast<int>(g_unified_ui.height), x, y,
+                            IsRepeatedObjectPosition)) {
+        original(self, x, y);
+        return true;
+    }
+    return false;
+}
+
+bool MoveAnnouncementPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    auto* bytes = static_cast<unsigned char*>(self);
+    if (self == g_announcement_root && IsCachedAnnouncementRootValid()) {
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
+        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
+        g_scaling_announcement_subtree = true;
+        original(self, viewport_x, viewport_y);
+        g_scaling_announcement_subtree = false;
+        return true;
+    }
+    if (parent && IsAnnouncementDescendant(self)) {
+        if (g_scaling_announcement_subtree) {
+            original(self, x, y);
+            return true;
+        }
+        if (IsRepeatedObjectPosition(self, x, y)) {
+            original(self, x, y);
+            return true;
+        }
+        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
+            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
+                                  static_cast<int>(g_unified_ui.height));
+        TitleNativeGeometry* native = RememberGeometry(
+            g_announcement_geometry, std::size(g_announcement_geometry),
+            g_announcement_geometry_count, self);
+        if (native) {
+            // Announcement captions and stat deltas are moved after the page
+            // is constructed.  Keep their latest authored 800x600 position
+            // instead of freezing the first (often 0,0) construction value.
+            native->x = x;
+            native->y = y;
+            *reinterpret_cast<int*>(bytes + 0x88) =
+                MulDiv(native->width, viewport_width, LegacyCanvas::width);
+            *reinterpret_cast<int*>(bytes + 0x8C) =
+                MulDiv(native->height, viewport_height, LegacyCanvas::height);
+            original(self,
+                MulDiv(native->x, viewport_width, LegacyCanvas::width),
+                MulDiv(native->y, viewport_height, LegacyCanvas::height));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DispatchAspectFitPageMove(PageMoveContext& context) {
+    using Handler = bool (*)(PageMoveContext&);
+    // Keep inter-page priority identical to the original HookGuiMove chain.
+    static constexpr Handler handlers[] = {
+        MoveEndGamePage,
+        MoveTitlePage,
+        MoveStaticPage,
+        MoveCompanyNavigationPage,
+        MoveCompanySectionPage,
+        MoveCompanyRevenuePage,
+        MoveAirportPage,
+        MoveStudioPage,
+        MoveTrainingFramePage,
+        MoveTrainingActivitiesPage,
+        MoveAnnouncementPage,
+    };
+    return DispatchFirstHandled(handlers, context);
+}
+
 void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
     if (!original || !self) {
@@ -5454,461 +6097,9 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         }
         return;
     }
-    if (self == g_end_game_summary_root) {
-        const RectI viewport = AspectFitLegacyCanvas(
-            static_cast<int>(g_unified_ui.width),
-            static_cast<int>(g_unified_ui.height));
-        GuiField<int>(self, GuiObjectField::width) = viewport.width;
-        GuiField<int>(self, GuiObjectField::height) = viewport.height;
-        original(self, viewport.x, viewport.y);
+    PageMoveContext page_move{self, parent, x, y, original, executable, immediate_call};
+    if (DispatchAspectFitPageMove(page_move)) {
         return;
-    }
-    if (parent && IsEndGameSummaryDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const RectI viewport = AspectFitLegacyCanvas(
-            static_cast<int>(g_unified_ui.width),
-            static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_end_game_summary_geometry,
-            std::size(g_end_game_summary_geometry),
-            g_end_game_summary_geometry_count, self);
-        if (native) {
-            GuiField<int>(self, GuiObjectField::width) = MulDiv(
-                native->width, viewport.width, LegacyCanvas::width);
-            GuiField<int>(self, GuiObjectField::height) = MulDiv(
-                native->height, viewport.height, LegacyCanvas::height);
-            if (EndGameCreditMotionState* motion =
-                    RememberEndGameCreditMotion(self, native)) {
-                const int current_x =
-                    GuiField<int>(self, GuiObjectField::x);
-                const int current_y =
-                    GuiField<int>(self, GuiObjectField::y);
-                motion->native_x = ResolveNativeAnimationCoordinate(
-                    x, current_x, motion->native_x);
-                motion->native_y = ResolveNativeAnimationCoordinate(
-                    y, current_y, motion->native_y);
-                original(self,
-                    MulDiv(motion->native_x, viewport.width,
-                           LegacyCanvas::width),
-                    MulDiv(motion->native_y, viewport.height,
-                           LegacyCanvas::height));
-                return;
-            }
-            original(self,
-                MulDiv(x, viewport.width, LegacyCanvas::width),
-                MulDiv(y, viewport.height, LegacyCanvas::height));
-            return;
-        }
-    }
-    if (self == g_unified_ui.title_screen_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent && IsTitleScreenDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberTitleNativeGeometry(self);
-        if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-        }
-        if (IsTitleStripGeometry(native)) {
-            // The original title controller keeps one primary native x and
-            // derives the paired strip from it every update:
-            //   primary += direction * 2, wrapping at +/-1000;
-            //   follower = primary < 0 ? primary + 2000 : primary - 2000.
-            // Reading the transformed object x back into that controller moves
-            // its wrap boundary and breaks the pair. Reproduce the exact native
-            // state machine here, then transform both absolute native outputs
-            // once. The two authored strips therefore retain their identities,
-            // speed, separation, direction changes, and hand-off order.
-            const int input_x = x;
-            const int current_x = *reinterpret_cast<int*>(bytes + 0x80);
-            const bool lead_strip =
-                native->x >= -1000 && native->x <= 1000;
-            RegisterTitleStrip(self, native);
-            if (lead_strip) {
-                const long long observed_delta =
-                    static_cast<long long>(input_x) - current_x;
-                if (observed_delta >= 1 && observed_delta <= 4) {
-                    g_title_strip_motion.native_step = 2;
-                } else if (observed_delta <= -1 && observed_delta >= -4) {
-                    g_title_strip_motion.native_step = -2;
-                } else if (input_x <= -990 && input_x >= -1010 &&
-                           current_x > 0) {
-                    g_title_strip_motion.native_step = 2;
-                } else if (input_x >= 990 && input_x <= 1010 &&
-                           current_x < 0) {
-                    g_title_strip_motion.native_step = -2;
-                }
-            }
-            const int native_x = lead_strip ?
-                g_title_strip_motion.primary_native_x :
-                g_title_strip_motion.follower_native_x;
-            x = MulDiv(native_x, viewport_width, LegacyCanvas::width);
-            y = MulDiv(native->y, viewport_height, LegacyCanvas::height);
-            original(self, x, y);
-            return;
-        }
-        x = MulDiv(x, viewport_width, LegacyCanvas::width);
-        y = MulDiv(y, viewport_height, LegacyCanvas::height);
-        original(self, x, y);
-        return;
-    }
-    // Keep these static pages in their original dispatch order. Animated
-    // pages (including company navigation) stay in the specialised paths below.
-    const StaticPageMoveRule static_pages[] = {
-        {g_title_tutorial_root, g_title_tutorial_geometry,
-         std::size(g_title_tutorial_geometry), &g_title_tutorial_geometry_count},
-        {g_title_tutorial_question_root, g_title_tutorial_question_geometry,
-         std::size(g_title_tutorial_question_geometry),
-         &g_title_tutorial_question_geometry_count, 6},
-        {g_artist_profile_root, g_artist_profile_geometry,
-         std::size(g_artist_profile_geometry), &g_artist_profile_geometry_count},
-        {g_artist_contract_root, g_artist_contract_geometry,
-         std::size(g_artist_contract_geometry), &g_artist_contract_geometry_count},
-        {g_artist_signing_root, g_artist_signing_geometry,
-         std::size(g_artist_signing_geometry), &g_artist_signing_geometry_count},
-    };
-    if (ApplyStaticPageMove(static_pages, std::size(static_pages), self, parent,
-                            static_cast<int>(g_unified_ui.width),
-                            static_cast<int>(g_unified_ui.height), x, y,
-                            IsRepeatedObjectPosition)) {
-        original(self, x, y);
-        return;
-    }
-    if (self == g_company_navigation_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent && IsCompanyNavigationDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_company_navigation_geometry,
-            std::size(g_company_navigation_geometry),
-            g_company_navigation_geometry_count, self);
-        if (native) {
-            // Retain the live native interpolation result, not the resource's
-            // initial slot. The next animation must start at this position.
-            native->x = x;
-            native->y = y;
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(self,
-                MulDiv(x, viewport_width, LegacyCanvas::width),
-                MulDiv(y, viewport_height, LegacyCanvas::height));
-            return;
-        }
-    }
-    if (CompanySectionLayout* company_section =
-            FindCompanySectionLayout(self)) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent) {
-        if (CompanySectionLayout* company_section =
-                FindCompanySectionLayoutForObject(self)) {
-            if (IsRepeatedObjectPosition(self, x, y)) {
-                original(self, x, y);
-                return;
-            }
-            const auto [viewport_x, viewport_y,
-                        viewport_width, viewport_height] =
-                AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                      static_cast<int>(g_unified_ui.height));
-            TitleNativeGeometry* native =
-                RememberDynamicCompanySectionGeometry(
-                    *company_section, self, x, y,
-                    viewport_width, viewport_height);
-            if (native) {
-                *reinterpret_cast<int*>(bytes + 0x88) =
-                    MulDiv(native->width, viewport_width,
-                           LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
-                    MulDiv(native->height, viewport_height,
-                           LegacyCanvas::height);
-                original(self,
-                    MulDiv(x, viewport_width, LegacyCanvas::width),
-                    MulDiv(y, viewport_height, LegacyCanvas::height));
-                return;
-            }
-        }
-    }
-    if (self == g_company_revenue_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent && IsCompanyRevenueDescendant(self)) {
-        const auto* executable_bytes = reinterpret_cast<unsigned char*>(executable);
-        const bool bar_update = executable &&
-            (immediate_call == executable_bytes + 0x84D3C ||
-             immediate_call == executable_bytes + 0x84E0D);
-        TitleNativeGeometry* cached = FindGeometry(
-            g_company_revenue_geometry,
-            g_company_revenue_geometry_count, self);
-        if (!g_company_revenue_waiting_for_bars && cached && executable &&
-            immediate_call == executable_bytes + 0x84AB7 &&
-            IsCompanyRevenueChartColumnGeometry(cached)) {
-            // 00484A9F reads the first column's fitted width, although its
-            // spacing and origin remain native. Undo only that half-width.
-            const RectI viewport = AspectFitLegacyCanvas(
-                static_cast<int>(g_unified_ui.width),
-                static_cast<int>(g_unified_ui.height));
-            x = CorrectCompanyColumnCenter(x,
-                MulDiv(cached->width, viewport.width, LegacyCanvas::width),
-                cached->width);
-        }
-        if (g_company_revenue_waiting_for_bars && cached &&
-            IsCompanyRevenueChartMemberGeometry(self, cached)) {
-            // The report controller must see and update the chart in its
-            // authored coordinate system before the fitted geometry is
-            // committed. Passing these moves through lets it replace the
-            // ten full-height resource placeholders with real values.
-            original(self, x, y);
-            return;
-        }
-        if (!bar_update && IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = cached ? cached : RememberGeometry(
-            g_company_revenue_geometry,
-            std::size(g_company_revenue_geometry),
-            g_company_revenue_geometry_count, self);
-        if (native) {
-            const bool live_bar = bar_update &&
-                IsCompanyRevenueBarGeometry(self, native) &&
-                ((x >= 12 && x <= 16) || (x >= 33 && x <= 37)) &&
-                y >= 0 && y <= 163;
-            if (live_bar) {
-                // 00484D15 resizes the bar before 00484D3C moves it.
-                // Retain that live height, including the one-pixel zero bar.
-                const int native_height =
-                    GuiField<int>(self, GuiObjectField::height);
-                native->x = x;
-                native->y = y;
-                native->height = native_height;
-                *reinterpret_cast<int*>(bytes + 0x88) =
-                    MulDiv(native->width, viewport_width,
-                           LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
-                    MulDiv(native_height, viewport_height,
-                           LegacyCanvas::height);
-                original(self,
-                    MulDiv(x, viewport_width, LegacyCanvas::width),
-                    MulDiv(y, viewport_height, LegacyCanvas::height));
-                return;
-            }
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(self,
-                MulDiv(x, viewport_width, LegacyCanvas::width),
-                MulDiv(y, viewport_height, LegacyCanvas::height));
-            return;
-        }
-    }
-    if (self == g_airport_selection_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        original(self, viewport_x, viewport_y);
-        return;
-    }
-    if (parent && IsAirportSelectionDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_airport_selection_geometry,
-            std::size(g_airport_selection_geometry),
-            g_airport_selection_geometry_count, self);
-        if (native) {
-            if (IsAirportAirplaneGeometry(native)) {
-                // The route controller reads this same rectangle back while
-                // interpolating and deciding when the airplane is visible.
-                // Preserve native logical geometry; only rendering is scaled.
-                *reinterpret_cast<int*>(bytes + 0x88) = native->width;
-                *reinterpret_cast<int*>(bytes + 0x8C) = native->height;
-                original(self, x, y);
-            } else {
-                *reinterpret_cast<int*>(bytes + 0x88) =
-                    MulDiv(native->width, viewport_width, LegacyCanvas::width);
-                *reinterpret_cast<int*>(bytes + 0x8C) =
-                    MulDiv(native->height, viewport_height, LegacyCanvas::height);
-                original(self,
-                    MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                    MulDiv(native->y, viewport_height, LegacyCanvas::height));
-            }
-            return;
-        }
-    }
-    const StaticPageMoveRule studio_pages[] = {
-        {g_studio_event_list_root, g_studio_event_list_geometry,
-         std::size(g_studio_event_list_geometry), &g_studio_event_list_geometry_count,
-         8, PageMoveCoordinates::SubmittedNative},
-        {g_studio_event_editor_root, g_studio_event_editor_geometry,
-         std::size(g_studio_event_editor_geometry), &g_studio_event_editor_geometry_count,
-         8, PageMoveCoordinates::SubmittedNative},
-    };
-    if (ApplyStaticPageMove(studio_pages, std::size(studio_pages), self, parent,
-                            static_cast<int>(g_unified_ui.width),
-                            static_cast<int>(g_unified_ui.height), x, y,
-                            IsRepeatedObjectPosition)) {
-        original(self, x, y);
-        return;
-    }
-    if (self == g_training_minigame_root) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) =
-            MulDiv(426, viewport_width, LegacyCanvas::width);
-        *reinterpret_cast<int*>(bytes + 0x8C) =
-            MulDiv(369, viewport_height, LegacyCanvas::height);
-        original(self,
-            viewport_x + MulDiv(187, viewport_width, LegacyCanvas::width),
-            viewport_y + MulDiv(126, viewport_height, LegacyCanvas::height));
-        return;
-    }
-    if (parent && IsTrainingMinigameDescendant(self)) {
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_training_minigame_geometry,
-            std::size(g_training_minigame_geometry),
-            g_training_minigame_geometry_count, self);
-        if (native) {
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            // Training activities move prompts and judgement markers while
-            // they run. Scale the coordinates supplied by this update rather
-            // than replaying the first cached position, while retaining the
-            // cached authored size to avoid cumulative scaling.
-            // The timer's depletion is rendered inside a stationary control.
-            // Some updates echo its already-scaled position; scaling that
-            // value again causes a one-frame jump. Keep only the timer group
-            // on its cached authored anchor while other activity objects use
-            // their live coordinates.
-            const bool fixed_timer = IsTrainingTimerGeometry(native);
-            const int native_x = fixed_timer ? native->x : x;
-            const int native_y = fixed_timer ? native->y : y;
-            original(self,
-                MulDiv(native_x, viewport_width, LegacyCanvas::width),
-                MulDiv(native_y, viewport_height, LegacyCanvas::height));
-            return;
-        }
-    }
-    // Activity roots coexist and share a cache; preserve roots-first group
-    // dispatch rather than treating each root as an independent page rule.
-    const StaticPageMoveRule training_activities{
-        nullptr, g_training_activity_geometry,
-        std::size(g_training_activity_geometry), &g_training_activity_geometry_count,
-        10, PageMoveCoordinates::SubmittedNative};
-    if (ApplyPageGroupMove(training_activities, g_training_activity_roots,
-                            g_training_activity_root_count, self, parent,
-                            static_cast<int>(g_unified_ui.width),
-                            static_cast<int>(g_unified_ui.height), x, y,
-                            IsRepeatedObjectPosition)) {
-        original(self, x, y);
-        return;
-    }
-    if (self == g_announcement_root && IsCachedAnnouncementRootValid()) {
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        *reinterpret_cast<int*>(bytes + 0x88) = viewport_width;
-        *reinterpret_cast<int*>(bytes + 0x8C) = viewport_height;
-        g_scaling_announcement_subtree = true;
-        original(self, viewport_x, viewport_y);
-        g_scaling_announcement_subtree = false;
-        return;
-    }
-    if (parent && IsAnnouncementDescendant(self)) {
-        if (g_scaling_announcement_subtree) {
-            original(self, x, y);
-            return;
-        }
-        if (IsRepeatedObjectPosition(self, x, y)) {
-            original(self, x, y);
-            return;
-        }
-        const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
-            AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
-                                  static_cast<int>(g_unified_ui.height));
-        TitleNativeGeometry* native = RememberGeometry(
-            g_announcement_geometry, std::size(g_announcement_geometry),
-            g_announcement_geometry_count, self);
-        if (native) {
-            // Announcement captions and stat deltas are moved after the page
-            // is constructed.  Keep their latest authored 800x600 position
-            // instead of freezing the first (often 0,0) construction value.
-            native->x = x;
-            native->y = y;
-            *reinterpret_cast<int*>(bytes + 0x88) =
-                MulDiv(native->width, viewport_width, LegacyCanvas::width);
-            *reinterpret_cast<int*>(bytes + 0x8C) =
-                MulDiv(native->height, viewport_height, LegacyCanvas::height);
-            original(self,
-                MulDiv(native->x, viewport_width, LegacyCanvas::width),
-                MulDiv(native->y, viewport_height, LegacyCanvas::height));
-            return;
-        }
     }
     const int current_width = *reinterpret_cast<int*>(bytes + 0x88);
     const int current_height = *reinterpret_cast<int*>(bytes + 0x8C);
@@ -5980,7 +6171,7 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         if (direct_cg_caption) {
             if (self != g_unified_ui.in_game_cg_caption) {
                 g_unified_ui.in_game_cg_caption = self;
-                if (y >= 0 && y <= 600) {
+                if (y >= 0 && y <= LegacyCanvas::height) {
                     g_unified_ui.in_game_cg_caption_native_y = y;
                 }
                 g_unified_ui.in_game_cg_caption_logged = false;
@@ -5995,7 +6186,7 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         if (direct_status_notice) {
             if (self != g_unified_ui.in_game_cg_item_notice) {
                 g_unified_ui.in_game_cg_item_notice = self;
-                if (x >= -800 && x <= 800 && y >= -200 && y <= 600) {
+                if (x >= -LegacyCanvas::width && x <= LegacyCanvas::width && y >= -200 && y <= LegacyCanvas::height) {
                     g_unified_ui.in_game_cg_item_notice_native_x = x;
                     g_unified_ui.in_game_cg_item_notice_native_y = y;
                 }
@@ -6220,8 +6411,8 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
                     self, width, height, x, y, call_site);
                 RememberProcessedLayoutObject(self);
             } else if (IsGroupCanvas(self)) {
-                x = (static_cast<int>(g_unified_ui.width) - 800) / 2;
-                y = (static_cast<int>(g_unified_ui.height) - 600) / 2;
+                x = (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2;
+                y = (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2;
             } else if (IsWorldMoveSource(world_source_return)) {
                 // Learned world-projection sources are a fallback. Known UI
                 // surfaces above must keep their specialized transforms even

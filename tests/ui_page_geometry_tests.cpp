@@ -1,5 +1,6 @@
 #include "gui_object.h"
 #include "ui_page_geometry.h"
+#include "ui_dispatch.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -405,6 +406,92 @@ bool TestRootPreparation() {
     return ok;
 }
 
+bool TestOrderedDispatch() {
+    struct Context { int coordinate = 5; int calls = 0; int handled_at = -1; };
+    using Handler = bool (*)(Context&);
+    const Handler handlers[] = {
+        [](Context& c) { ++c.calls; c.coordinate += 7; return c.handled_at == 0; },
+        [](Context& c) { ++c.calls; c.coordinate *= 2; return c.handled_at == 1; },
+        [](Context& c) { ++c.calls; c.coordinate -= 3; return c.handled_at == 2; },
+    };
+    bool ok = true;
+    for (int selected = -1; selected < 3; ++selected) {
+        Context context;
+        context.handled_at = selected;
+        const bool handled = stardom::DispatchFirstHandled(handlers, context);
+        const int expected[] = {12, 24, 21};
+        ok &= Expect(handled == (selected >= 0) &&
+                     context.calls == (selected < 0 ? 3 : selected + 1) &&
+                     context.coordinate == expected[selected < 0 ? 2 : selected],
+            "ordered dispatch stops at first handler and retains fallthrough mutations");
+    }
+    return ok;
+}
+
+bool TestSubtreeTraversal() {
+    using namespace stardom;
+    bool ok = true;
+    TestGuiObject nodes[4]{};
+    auto connect = [&]() {
+        GuiField<void*>(nodes[0].bytes, GuiObjectField::first_child) = nodes[1].bytes;
+        GuiField<void*>(nodes[1].bytes, GuiObjectField::next_sibling) = nodes[2].bytes;
+        GuiField<void*>(nodes[1].bytes, GuiObjectField::first_child) = nodes[3].bytes;
+    };
+    auto index = [&](void* object) {
+        for (int i = 0; i < 4; ++i) if (object == nodes[i].bytes) return i;
+        return -1;
+    };
+    std::string events;
+    int reject = -1;
+    bool mutate = false, guarded = false, correct_guard = true;
+    auto enter = [&](void* object, int depth) {
+        const int i = index(object);
+        events += char('A' + i);
+        if (i == reject) return false;
+        if (depth == 0) guarded = true;
+        correct_guard &= guarded;
+        if (mutate && i == 1) {
+            GuiField<void*>(object, GuiObjectField::next_sibling) = nullptr;
+        }
+        return true;
+    };
+    auto leave = [&](void* object, int depth) {
+        correct_guard &= guarded;
+        events += char('a' + index(object));
+        if (depth == 0) guarded = false;
+    };
+    connect();
+    VisitGuiSubtree(nodes[0].bytes, 0, 8, 512, enter, leave);
+    ok &= Expect(events == "ABDdbCca" && correct_guard && !guarded,
+        "subtree traversal keeps pre/post order and root guard active through descendants");
+    events.clear();
+    VisitGuiSubtree(nodes[0].bytes, 0, 0, 512, enter, leave);
+    ok &= Expect(events == "Aa", "maximum depth is inclusive and excludes deeper node callbacks");
+    events.clear();
+    VisitGuiSubtree(nodes[0].bytes, 0, 8, 1, enter, leave);
+    ok &= Expect(events == "ABDdba",
+        "child budget applies independently to each parent");
+    events.clear(); reject = 1;
+    VisitGuiSubtree(nodes[0].bytes, 0, 8, 512, enter, leave);
+    ok &= Expect(events == "ABCca", "rejected node skips descendants and leave callback");
+    events.clear(); reject = 0;
+    VisitGuiSubtree(nodes[0].bytes, 0, 8, 512, enter, leave);
+    ok &= Expect(events == "A" && !guarded, "root preparation rejection stops the subtree");
+    events.clear(); reject = -1; mutate = true;
+    VisitGuiSubtree(nodes[0].bytes, 0, 8, 512, enter, leave);
+    ok &= Expect(events == "ABDdbCca", "next sibling is retained before child callbacks mutate links");
+    events.clear();
+    VisitGuiSubtree(nullptr, 0, 8, 512, enter, leave);
+    VisitGuiSubtree(nodes[0].bytes, 9, 8, 512, enter, leave);
+    ok &= Expect(events.empty(), "invalid root and excessive initial depth trigger no callbacks");
+    events.clear(); mutate = false; connect();
+    GuiField<void*>(nodes[2].bytes, GuiObjectField::next_sibling) = nodes[2].bytes;
+    VisitGuiSubtree(nodes[0].bytes, 0, 8, 3, enter, leave);
+    ok &= Expect(events == "ABDdbCcCca",
+        "sibling cycle is bounded by the original per-parent child limit");
+    return ok;
+}
+
 bool TestPageGroupMoves() {
     using namespace stardom;
     bool ok = true;
@@ -490,6 +577,8 @@ int main() {
     ok &= TestControllerOwnedRefresh();
     ok &= TestPageGroupMoves();
     ok &= TestRootPreparation();
+    ok &= TestOrderedDispatch();
+    ok &= TestSubtreeTraversal();
     const auto text_native = FitPageTextMetrics(12, 0, 600);
     const auto text_hd = FitPageTextMetrics(12, 0, 1080);
     const auto text_multiline = FitPageTextMetrics(16, 3, 1080);
