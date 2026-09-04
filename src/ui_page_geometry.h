@@ -33,6 +33,14 @@ NativeGeometry* RememberGeometry(NativeGeometry* geometries, size_t capacity,
                                  size_t& count, void* object);
 bool IsDescendantOf(void* object, void* root, int maximum_depth = 10);
 
+// ItemList.txt: one card, three movable tabs, five fixed item rows and a
+// complete scroll/exit column. Tab positions change with the selected category.
+bool IsInventoryPageTree(void* object, void* primary_root);
+bool IsInventoryTargetTree(void* object, void* primary_root);
+// ItemTarget controller mixes fitted card coordinates with native offsets.
+void FitInventoryTargetPosition(int card_x, int card_y, int viewport_x,
+    int viewport_y, int viewport_width, int viewport_height, int& x, int& y);
+
 // Standard aspect-fit roots only. Special per-control animation transforms
 // remain outside this dispatcher. Rules run root then descendants in order.
 enum class PageMoveCoordinates { CachedNative, SubmittedNative };

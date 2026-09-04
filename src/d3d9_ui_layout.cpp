@@ -520,6 +520,11 @@ bool IsArtistProfilePage(void* object, void* parent,
     return visited == 6 && tabs == 4 && profile_card && side_strip;
 }
 
+bool IsInventoryPage(void* object, void* parent, int, int) {
+    return parent == g_unified_ui.primary_root &&
+        IsInventoryPageTree(object, g_unified_ui.primary_root);
+}
+
 bool IsArtistContractPage(void* object, void* parent,
                           int width, int height) {
     if (!CanReadGuiObject(object) || parent != g_unified_ui.primary_root ||
@@ -1969,6 +1974,12 @@ TitleNativeGeometry g_artist_profile_geometry[512]{};
 size_t g_artist_profile_geometry_count = 0;
 void* g_artist_profile_root = nullptr;
 TitleNativeGeometry g_artist_contract_geometry[64]{};
+TitleNativeGeometry g_inventory_geometry[64]{};
+size_t g_inventory_geometry_count = 0;
+void* g_inventory_root = nullptr;
+void* g_inventory_target_root = nullptr;
+TitleNativeGeometry g_inventory_target_geometry[8]{};
+size_t g_inventory_target_geometry_count = 0;
 size_t g_artist_contract_geometry_count = 0;
 void* g_artist_contract_root = nullptr;
 TitleNativeGeometry g_artist_signing_geometry[128]{};
@@ -2317,6 +2328,52 @@ void ResetArtistContractGeometry(void* root) {
     g_artist_contract_geometry_count = 0;
 }
 
+void ResetInventoryGeometry(void* root) {
+    if (g_inventory_root == root) return;
+    g_inventory_root = root;
+    g_inventory_geometry_count = 0;
+}
+
+void ScaleInventorySubtree(void* object, int depth = 0) {
+    ScaleAspectFitSubtree(object, depth, g_inventory_geometry,
+        g_inventory_geometry_count, ResetInventoryGeometry, 6, 64);
+}
+
+void DiscoverInventory(void* candidate) {
+    if (g_inventory_root || !IsInventoryPageTree(candidate, g_unified_ui.primary_root))
+        return;
+    ResetInventoryGeometry(candidate);
+    RememberLayoutRoot(candidate);
+    ScaleInventorySubtree(candidate);
+}
+
+void RefreshInventoryLayout() {
+    // First-frame discovery is independent of the slow maintenance pass.
+    // Once found, no GUI-tree scan is needed, even while this page is hidden.
+    if (!g_inventory_root) {
+        void* child = GuiPointer(g_unified_ui.primary_root, GuiObjectField::first_child);
+        for (size_t i = 0; CanReadGuiObject(child) && i < 512; ++i) {
+            DiscoverInventory(child);
+            if (g_inventory_root) break;
+            child = GuiPointer(child, GuiObjectField::next_sibling);
+        }
+    }
+    if (!CanReadGuiObject(g_inventory_root) ||
+        !GuiField<unsigned char>(g_inventory_root, GuiObjectField::visible)) return;
+    const RectI viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+    // Controllers may rewrite bounds when refreshing row contents. Repair
+    // only retained bounds; never replay tab positions during interpolation.
+    for (size_t i = 0; i < g_inventory_geometry_count; ++i) {
+        const auto& native = g_inventory_geometry[i];
+        if (!CanReadGuiObject(native.object)) continue;
+        GuiField<int>(native.object, GuiObjectField::width) =
+            MulDiv(native.width, viewport.width, LegacyCanvas::width);
+        GuiField<int>(native.object, GuiObjectField::height) =
+            MulDiv(native.height, viewport.height, LegacyCanvas::height);
+    }
+}
+
 void ScaleArtistContractSubtree(void* object, int depth = 0) {
     ScaleAspectFitSubtree(
         object, depth, g_artist_contract_geometry,
@@ -2580,9 +2637,13 @@ void __fastcall HookCompanyAnimateMove(void* self, void*, int x, int y,
     GuiObjectReadBatch read_batch;
     if (CanReadGuiObject(self)) {
         DiscoverCompanyNavigation(GuiPointer(self, GuiObjectField::parent));
-        if (TitleNativeGeometry* native = FindGeometry(
+        void* parent = GuiPointer(self, GuiObjectField::parent);
+        if (CanReadGuiObject(parent)) DiscoverInventory(GuiPointer(parent, GuiObjectField::parent));
+        TitleNativeGeometry* native = FindGeometry(
                 g_company_navigation_geometry,
-                g_company_navigation_geometry_count, self)) {
+                g_company_navigation_geometry_count, self);
+        if (!native) native = FindGeometry(g_inventory_geometry, g_inventory_geometry_count, self);
+        if (native) {
             // 005187A0 snapshots +80/+84 into its interpolation start.
             // Keep BOTH endpoints native; HookGuiMove fits each result once.
             const int fitted_x = GuiField<int>(self, GuiObjectField::x);
@@ -2699,6 +2760,7 @@ bool IsAspectFittedTextObject(void* object) {
         g_title_native_root, g_title_tutorial_root, g_title_tutorial_bubble,
         g_title_tutorial_question_root, g_announcement_root,
         g_artist_profile_root, g_artist_contract_root, g_artist_signing_root,
+        g_inventory_root,
         g_company_revenue_root, g_company_navigation_root,
         g_airport_selection_root, g_studio_event_list_root,
         g_studio_event_editor_root, g_training_minigame_root,
@@ -4625,6 +4687,12 @@ bool ReflowAspectFitPageRules(const StaticPageReflowRule* rules, size_t rule_cou
 }
 
 bool ReflowStaticAspectFitPage(void* child, void* parent, int width, int height) {
+    // Detached item recipient popup is positioned by its controller, not by
+    // generic legacy edge anchoring or the 800x600 page-root transformer.
+    if (child == g_inventory_target_root) {
+        RememberProcessedLayoutObject(child);
+        return true;
+    }
     const StaticPageReflowRule rules[] = {
         {g_title_tutorial_root, IsTitleTutorialPage, ResetTitleTutorialGeometry,
          ScaleTitleTutorialSubtree, "title tutorial"},
@@ -4637,6 +4705,8 @@ bool ReflowStaticAspectFitPage(void* child, void* parent, int width, int height)
          ScaleArtistContractSubtree, "artist contract"},
         {g_artist_signing_root, IsArtistSigningPage, ResetArtistSigningGeometry,
          ScaleArtistSigningSubtree, "artist signing"},
+        {g_inventory_root, IsInventoryPage, ResetInventoryGeometry,
+         ScaleInventorySubtree, "inventory", PageRefreshPolicy::PreserveControllerState},
     };
     return ReflowAspectFitPageRules(rules, std::size(rules),
                                     child, parent, width, height);
@@ -5313,6 +5383,7 @@ void RefreshUnifiedUILayout() {
     UpdateTitleStripMotion(now);
     CorrectArtistRadarVertices();
     DiscoverVisibleCompanyNavigation();
+    RefreshInventoryLayout();
     RefreshCompanyRevenueBars();
     // Closing an already discovered announcement is a direct visibility-byte
     // change and may not produce GuiMove activity. Retire the active render
@@ -5662,6 +5733,65 @@ bool MoveStaticPage(PageMoveContext& context) {
         return true;
     }
     return false;
+}
+
+bool MoveInventoryPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    DiscoverInventory(self);
+    if (g_inventory_root && (self == g_inventory_target_root ||
+            IsInventoryTargetTree(self, g_unified_ui.primary_root))) {
+        if (g_inventory_target_root != self) {
+            g_inventory_target_root = self;
+            g_inventory_target_geometry_count = 0;
+        }
+        const auto viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+        void* card = GuiPointer(g_inventory_root, GuiObjectField::first_child);
+        if (!CanReadGuiObject(card)) return false;
+        // 0048933D reads PlaneBack's live coordinates. 00489A10 then adds
+        // native (11, 81 + row*85), without the inventory root's origin.
+        // Scale just those offsets, and add the fitted root origin once.
+        if (!IsRepeatedObjectPosition(self, x, y)) {
+            FitInventoryTargetPosition(GuiField<int>(card, GuiObjectField::x),
+                GuiField<int>(card, GuiObjectField::y), viewport.x, viewport.y,
+                viewport.width, viewport.height, x, y);
+        }
+        GuiField<int>(self, GuiObjectField::width) = MulDiv(370, viewport.width, 800);
+        GuiField<int>(self, GuiObjectField::height) = MulDiv(90, viewport.height, 600);
+        ScaleAspectFitSubtree(GuiPointer(self, GuiObjectField::first_child), 1,
+            g_inventory_target_geometry, g_inventory_target_geometry_count,
+            [](void*) {}, 4, 8);
+        RememberProcessedLayoutObject(self);
+        original(self, x, y);
+        return true;
+    }
+    if (g_inventory_target_root && IsDescendantOf(self, g_inventory_target_root, 4)) {
+        const StaticPageMoveRule target_rule{g_inventory_target_root,
+            g_inventory_target_geometry, std::size(g_inventory_target_geometry),
+            &g_inventory_target_geometry_count, 4};
+        if (ApplyStaticPageMove(&target_rule, 1, self, parent,
+                static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height),
+                x, y, IsRepeatedObjectPosition)) {
+            original(self, x, y);
+            return true;
+        }
+    }
+    const StaticPageMoveRule rule = {g_inventory_root, g_inventory_geometry,
+        std::size(g_inventory_geometry), &g_inventory_geometry_count, 6,
+        PageMoveCoordinates::SubmittedNative};
+    const int native_x = x, native_y = y;
+    const bool repeated = IsRepeatedObjectPosition(self, x, y);
+    if (!ApplyStaticPageMove(&rule, 1, self, parent,
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height),
+            x, y, IsRepeatedObjectPosition)) return false;
+    if (!repeated) {
+        if (auto* native = FindGeometry(g_inventory_geometry, g_inventory_geometry_count, self)) {
+            native->x = native_x;
+            native->y = native_y;
+        }
+    }
+    original(self, x, y);
+    return true;
 }
 
 bool MoveCompanyNavigationPage(PageMoveContext& context) {
@@ -6037,6 +6167,7 @@ bool DispatchAspectFitPageMove(PageMoveContext& context) {
         MoveEndGamePage,
         MoveTitlePage,
         MoveStaticPage,
+        MoveInventoryPage,
         MoveCompanyNavigationPage,
         MoveCompanySectionPage,
         MoveCompanyRevenuePage,

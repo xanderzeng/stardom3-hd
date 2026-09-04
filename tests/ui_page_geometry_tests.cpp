@@ -567,9 +567,116 @@ bool TestPageGroupMoves() {
 
 }  // namespace
 
-int main() {
+bool TestInventoryPage() {
     using namespace stardom;
     bool ok = true;
+    TestGuiObject primary{}, root{}, card{}, controls[12]{};
+    SetGeometry(root, 560, 240, 800, 600);
+    SetGeometry(card, 200, 35, 420, 542);
+    GuiField<void*>(root.bytes, GuiObjectField::parent) = primary.bytes;
+    GuiField<void*>(root.bytes, GuiObjectField::first_child) = card.bytes;
+    GuiField<void*>(card.bytes, GuiObjectField::parent) = root.bytes;
+    GuiField<void*>(card.bytes, GuiObjectField::first_child) = controls[0].bytes;
+    for (int i = 0; i < 12; ++i) {
+        GuiField<void*>(controls[i].bytes, GuiObjectField::parent) = card.bytes;
+        if (i < 11) GuiField<void*>(controls[i].bytes, GuiObjectField::next_sibling) = controls[i + 1].bytes;
+    }
+    for (int i = 0; i < 3; ++i) SetGeometry(controls[i], 125 + i * 65, 12, 40, 40);
+    for (int i = 0; i < 5; ++i) SetGeometry(controls[i + 3], 0, 65 + i * 85, i == 4 ? 370 : 380, 90);
+    SetGeometry(controls[8], 375, 60, 28, 79);
+    SetGeometry(controls[9], 375, 410, 28, 79);
+    SetGeometry(controls[10], 375, 139, 28, 271);
+    SetGeometry(controls[11], 283, 500, 98, 28);
+    ok &= Expect(IsInventoryPageTree(root.bytes, primary.bytes), "inventory resource tree must match");
+    SetGeometry(controls[1], 279, 12, 40, 40);
+    SetGeometry(controls[2], 344, 12, 40, 40);
+    ok &= Expect(IsInventoryPageTree(root.bytes, primary.bytes), "selected inventory tab offsets must match");
+    SetGeometry(card, 40, 31, 720, 537);
+    ok &= Expect(!IsInventoryPageTree(root.bytes, primary.bytes), "save/load card must remain native");
+    SetGeometry(card, 200, 35, 420, 542);
+    SetGeometry(controls[7], 0, 405, 380, 90);
+    ok &= Expect(!IsInventoryPageTree(root.bytes, primary.bytes), "incomplete inventory signature must not match");
+    SetGeometry(controls[7], 0, 405, 370, 90);
+    GuiField<void*>(controls[11].bytes, GuiObjectField::next_sibling) = controls[0].bytes;
+    ok &= Expect(!IsInventoryPageTree(root.bytes, primary.bytes), "cyclic inventory signature must terminate");
+    GuiField<void*>(controls[11].bytes, GuiObjectField::next_sibling) = nullptr;
+    ok &= Expect(!IsInventoryPageTree(root.bytes, card.bytes), "inventory must be a direct root child");
+
+    NativeGeometry cache[16]{};
+    size_t count = 0;
+    RememberGeometry(cache, 16, count, card.bytes);
+    for (auto& control : controls) RememberGeometry(cache, 16, count, control.bytes);
+    const StaticPageMoveRule rule{root.bytes, cache, 16, &count, 6, PageMoveCoordinates::SubmittedNative};
+    repeated_position = false;
+    int x = 200, y = 35;
+    ok &= Expect(ApplyStaticPageMove(&rule, 1, card.bytes, root.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+        x == 360 && y == 63 && GuiField<int>(card.bytes, GuiObjectField::width) == 756 &&
+        GuiField<int>(card.bytes, GuiObjectField::height) == 976, "inventory card must fit 1080p");
+    x = 220; y = 12;
+    ok &= Expect(ApplyStaticPageMove(&rule, 1, controls[1].bytes, card.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+        x == 396 && y == 22 && GuiField<int>(controls[1].bytes, GuiObjectField::width) == 72,
+        "inventory tabs must use current interpolation, not their initial slots");
+    x = 279; y = 12;
+    ok &= Expect(ApplyStaticPageMove(&rule, 1, controls[1].bytes, card.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+        x == 502 && GuiField<int>(controls[1].bytes, GuiObjectField::width) == 72,
+        "inventory tab refresh must not double scale");
+    for (int i = 0; i < 5; ++i) {
+        x = 0; y = 65 + i * 85;
+        ok &= Expect(ApplyStaticPageMove(&rule, 1, controls[i + 3].bytes, card.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+            y == 117 + i * 153 && GuiField<int>(controls[i + 3].bytes, GuiObjectField::height) == 162,
+            "all five inventory rows must preserve spacing");
+    }
+    const auto memo = FitCompanyListMetrics({1, 0, 199, 59, 12, 3}, 1440, 1080);
+    ok &= Expect(memo.left == 2 && memo.right == 358 && memo.bottom == 106 &&
+        memo.font_size == 22 && memo.line_gap == 5, "inventory memo viewport and baseline must scale together");
+    return ok;
+}
+
+bool TestInventoryTarget() {
+    using namespace stardom;
+    bool ok = true;
+    TestGuiObject primary{}, root{}, card{}, options[5]{};
+    SetGeometry(root, 371, 484, 370, 90);
+    SetGeometry(card, 0, 30, 363, 56);
+    GuiField<void*>(root.bytes, GuiObjectField::parent) = primary.bytes;
+    GuiField<void*>(root.bytes, GuiObjectField::first_child) = card.bytes;
+    GuiField<void*>(card.bytes, GuiObjectField::first_child) = options[0].bytes;
+    for (int i = 0; i < 5; ++i) {
+        if (i < 4) SetGeometry(options[i], 20 + i * 70, -26, 70, 80);
+        else SetGeometry(options[i], 311, 17, 46, 22);
+        if (i < 4) GuiField<void*>(options[i].bytes, GuiObjectField::next_sibling) = options[i + 1].bytes;
+    }
+    ok &= Expect(IsInventoryTargetTree(root.bytes, primary.bytes), "complete recipient popup must match");
+    SetGeometry(options[3], 230, 0, 70, 80);
+    ok &= Expect(!IsInventoryTargetTree(root.bytes, primary.bytes), "unrelated popup must not match");
+    SetGeometry(options[3], 230, -26, 70, 80);
+    GuiField<void*>(options[4].bytes, GuiObjectField::next_sibling) = options[0].bytes;
+    ok &= Expect(!IsInventoryTargetTree(root.bytes, primary.bytes), "cyclic recipient popup must terminate");
+    GuiField<void*>(options[4].bytes, GuiObjectField::next_sibling) = nullptr;
+    ok &= Expect(!IsInventoryTargetTree(root.bytes, card.bytes), "recipient popup must be a direct root child");
+    for (int row = 0; row < 5; ++row) {
+        int x = 360 + 11, y = 63 + 81 + row * 85;
+        FitInventoryTargetPosition(360, 63, 240, 0, 1440, 1080, x, y);
+        ok &= Expect(x == 620 && y == 209 + row * 153,
+            "recipient popup must fit only native offsets for every item row");
+        // The popup's decorative Give (311,47) aligns to the source row's
+        // Give (323,65+row*85+62), allowing one-pixel independent rounding.
+        ok &= Expect(x + 560 == 1180 && y + 85 == 294 + row * 153,
+            "recipient Give must stay beside the clicked inventory row");
+        x = 211; y = 35 + 81 + row * 85;
+        FitInventoryTargetPosition(200, 35, 0, 0, 800, 600, x, y);
+        ok &= Expect(x == 211 && y == 116 + row * 85, "native resolution must stay unchanged");
+    }
+    int x = 211, y = 116;
+    FitInventoryTargetPosition(200, 35, 0, 100, 800, 600, x, y);
+    ok &= Expect(x == 211 && y == 216, "letterbox origin must be added once");
+    return ok;
+}
+
+int main() {
+    using namespace stardom;
+    bool ok = TestInventoryPage();
+    ok &= TestInventoryTarget();
     ok &= TestStaticPageMoves();
     ok &= TestStaticPageAncestorLimits();
     ok &= TestStaticPageReflow();

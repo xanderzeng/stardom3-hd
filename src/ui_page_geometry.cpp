@@ -8,6 +8,74 @@
 
 namespace stardom {
 
+void FitInventoryTargetPosition(int card_x, int card_y, int viewport_x,
+        int viewport_y, int viewport_width, int viewport_height, int& x, int& y) {
+    x = viewport_x + card_x + MulDiv(x - card_x, viewport_width, LegacyCanvas::width);
+    y = viewport_y + card_y + MulDiv(y - card_y, viewport_height, LegacyCanvas::height);
+}
+
+bool IsInventoryTargetTree(void* object, void* primary_root) {
+    if (!primary_root || !CanReadGuiObject(object) ||
+        GuiPointer(object, GuiObjectField::parent) != primary_root ||
+        GuiField<int>(object, GuiObjectField::width) != 370 ||
+        GuiField<int>(object, GuiObjectField::height) != 90) return false;
+    void* card = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(card) || GuiPointer(card, GuiObjectField::next_sibling) ||
+        GuiField<int>(card, GuiObjectField::x) != 0 ||
+        GuiField<int>(card, GuiObjectField::y) != 30 ||
+        GuiField<int>(card, GuiObjectField::width) != 363 ||
+        GuiField<int>(card, GuiObjectField::height) != 56) return false;
+    unsigned stars = 0;
+    bool give = false;
+    int count = 0;
+    void* child = GuiPointer(card, GuiObjectField::first_child);
+    for (; CanReadGuiObject(child) && count < 6; ++count) {
+        const int x = GuiField<int>(child, GuiObjectField::x);
+        const int y = GuiField<int>(child, GuiObjectField::y);
+        const int w = GuiField<int>(child, GuiObjectField::width);
+        const int h = GuiField<int>(child, GuiObjectField::height);
+        for (int i = 0; i < 4; ++i)
+            if (x == 20 + i * 70 && y == -26 && w == 70 && h == 80) stars |= 1u << i;
+        give |= x == 311 && y == 17 && w == 46 && h == 22;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return !child && count == 5 && stars == 15 && give;
+}
+
+bool IsInventoryPageTree(void* object, void* primary_root) {
+    if (!primary_root || !CanReadGuiObject(object) ||
+        GuiPointer(object, GuiObjectField::parent) != primary_root ||
+        GuiField<int>(object, GuiObjectField::width) != 800 ||
+        GuiField<int>(object, GuiObjectField::height) != 600) return false;
+    void* card = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(card) || GuiPointer(card, GuiObjectField::next_sibling) ||
+        GuiField<int>(card, GuiObjectField::x) != 200 ||
+        GuiField<int>(card, GuiObjectField::y) != 35 ||
+        GuiField<int>(card, GuiObjectField::width) != 420 ||
+        GuiField<int>(card, GuiObjectField::height) != 542) return false;
+    unsigned rows = 0;
+    int tabs = 0, count = 0;
+    bool up = false, down = false, track = false, exit = false;
+    void* child = GuiPointer(card, GuiObjectField::first_child);
+    for (; CanReadGuiObject(child) && count < 16; ++count) {
+        const int x = GuiField<int>(child, GuiObjectField::x);
+        const int y = GuiField<int>(child, GuiObjectField::y);
+        const int w = GuiField<int>(child, GuiObjectField::width);
+        const int h = GuiField<int>(child, GuiObjectField::height);
+        tabs += x >= 125 && x <= 344 && y == 12 && w == 40 && h == 40;
+        for (int row = 0; row < 5; ++row)
+            if (x == 0 && y == 65 + row * 85 &&
+                w == (row == 4 ? 370 : 380) && h == 90) rows |= 1u << row;
+        up |= x == 375 && y == 60 && w == 28 && h == 79;
+        down |= x == 375 && y == 410 && w == 28 && h == 79;
+        track |= x == 375 && y == 139 && w == 28 && h == 271;
+        exit |= x == 283 && y == 500 && w == 98 && h == 28;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return !child && count == 12 && tabs == 3 && rows == 31 &&
+        up && down && track && exit;
+}
+
 PageTextMetrics FitPageTextMetrics(int font_size, int line_gap,
                                    int viewport_height) {
     const int font = MulDiv(font_size, viewport_height, LegacyCanvas::height);
