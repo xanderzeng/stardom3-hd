@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "d3d9_proxy_internal.h"
+#include "font_outline.h"
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
@@ -312,6 +313,9 @@ public:
 
         const HRESULT result = real_->CreateDevice(adapter, type, focus_window, flags, &patched, device);
         if (SUCCEEDED(result)) {
+            if (config.font_outline_union) {
+                InstallFontOutlineHook(GetModuleHandleW(nullptr));
+            }
             *parameters = patched;
             ResizeClientArea(target_window, output_width, output_height, config.borderless);
             if (config.native_render && config.unified_ui_layout) {
@@ -328,7 +332,8 @@ public:
             if (config.native_render &&
                 (config.ui_draw_diagnostics || config.suppress_transparent_ui ||
                  config.ui_container_probe || config.suppress_proxy_containers ||
-                 config.gui_runtime_probe || config.unified_ui_layout) && device && *device) {
+                 config.gui_runtime_probe || config.unified_ui_layout ||
+                 config.font_outline_union) && device && *device) {
                 InstallUIDrawHooks(*device, config.ui_draw_diagnostics,
                                    config.suppress_transparent_ui, config.ui_container_probe,
                                    config.suppress_proxy_containers, config.gui_runtime_probe);

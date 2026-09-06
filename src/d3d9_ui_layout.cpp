@@ -3,6 +3,7 @@
 #include "ui_layout_registry.h"
 #include "ui_page_geometry.h"
 #include "ui_dispatch.h"
+#include "font_outline.h"
 
 #include <intrin.h>
 
@@ -2889,6 +2890,12 @@ void __fastcall HookCompanyListDraw(void* self, void*, void* renderer,
         g_company_list_draw(self, renderer, time, flags);
         return;
     }
+    // Live inventory Memo vtable 006F03F8 points to 00533700, shared with
+    // company lists, rather than the separate 00530310 text renderer.
+    const auto* inventory = FindGeometry(
+        g_inventory_geometry, g_inventory_geometry_count, self);
+    InventoryTextContrast contrast(inventory && inventory->width == 200 &&
+        inventory->height == 60);
     // 00533700 draws the list's text directly, without GuiMove children.
     // Keep logical wrapping/scrolling/month indices native; fit these six
     // render metrics only for the duration of the draw and then restore them.

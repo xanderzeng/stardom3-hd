@@ -121,6 +121,8 @@ Config LoadConfig(const std::wstring& ini_path) {
                               ini_path.c_str())), 0, 128);
     config.small_font_scale = ReadFontScale(
         ini_path, L"SmallFontScale");
+    config.font_outline_union = GetPrivateProfileIntW(
+        L"Widescreen", L"FontOutlineUnion", 0, ini_path.c_str()) != 0;
     return config;
 }
 

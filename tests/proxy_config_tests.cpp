@@ -63,6 +63,11 @@ int wmain() {
           "SmallFontMaxHeight must default to 16");
     Check(config.small_font_scale == 1.00,
           "SmallFontScale must default to 1.00");
+    Check(!config.font_outline_union, "outline experiment must be opt-in");
+    WriteOption(path, L"FontOutlineUnion", L"1");
+    config = stardom::LoadConfig(path);
+    Check(config.font_outline_union && !config.debug_mode,
+          "outline rendering must work without diagnostics");
 
     WriteOption(path, L"FontName", L"Microsoft JhengHei");
     config = stardom::LoadConfig(path);

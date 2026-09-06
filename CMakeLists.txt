@@ -23,6 +23,7 @@ add_library(d3d9 SHARED
     src/render_diagnostics.h
     src/d3d9_video.cpp
     src/d3d9_font.cpp
+    src/font_outline.cpp
     src/d3d9_proxy_internal.h
     src/ui_layout_state.h
     src/ui_layout_state.cpp
@@ -99,6 +100,14 @@ target_compile_features(gui_field_tests PRIVATE cxx_std_17)
 target_include_directories(gui_field_tests PRIVATE src)
 set_property(TARGET gui_field_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_test(NAME gui_field COMMAND gui_field_tests)
+
+add_executable(font_outline_render_tests tests/font_outline_render_tests.cpp)
+target_compile_features(font_outline_render_tests PRIVATE cxx_std_17)
+target_include_directories(font_outline_render_tests PRIVATE src)
+target_compile_definitions(font_outline_render_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(font_outline_render_tests PRIVATE user32)
+set_property(TARGET font_outline_render_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME font_outline_render COMMAND font_outline_render_tests)
 
 add_test(NAME resolution_geometry COMMAND resolution_geometry_tests)
 add_test(NAME proxy_config COMMAND proxy_config_tests)
