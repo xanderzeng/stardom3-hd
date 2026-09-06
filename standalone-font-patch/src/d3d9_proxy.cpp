@@ -1,4 +1,5 @@
 #include "font_hook.h"
+#include "outline_bridge.h"
 
 #include <windows.h>
 #include <d3d9.h>
@@ -38,7 +39,9 @@ bool LoadSystemD3D9() {
 }  // namespace
 
 extern "C" IDirect3D9* WINAPI Direct3DCreate9(UINT sdk_version) {
-    return LoadSystemD3D9() ? g_create9(sdk_version) : nullptr;
+    auto* d3d = LoadSystemD3D9() ? g_create9(sdk_version) : nullptr;
+    stardom_font::AttachOutline(d3d);
+    return d3d;
 }
 
 extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version,
@@ -46,14 +49,17 @@ extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version,
     if (!d3d || !LoadSystemD3D9() || !g_create9_ex) {
         return D3DERR_NOTAVAILABLE;
     }
-    return g_create9_ex(sdk_version, d3d);
+    const HRESULT hr = g_create9_ex(sdk_version, d3d);
+    if (SUCCEEDED(hr)) stardom_font::AttachOutline(*d3d, true);
+    return hr;
 }
 
-extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
+extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
         stardom_font::InstallFontHook();
     } else if (reason == DLL_PROCESS_DETACH) {
+        if (!reserved) stardom_font::DetachOutline();
         stardom_font::UninstallFontHook();
     }
     return TRUE;

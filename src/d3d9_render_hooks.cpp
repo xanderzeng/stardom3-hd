@@ -2,6 +2,7 @@
 #include "gui_object.h"
 #include "render_diagnostics.h"
 #include "render_hook_state.h"
+#include "font_outline.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -1735,6 +1736,9 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
             device, type, start_vertex, primitive_count);
         const TitleScreenClipState title_clip = BeginTitleScreenClip(
             device, airport_date_hud);
+        const FontOutlineDraw outline(device,
+            primitive_count == 2 &&
+            (type == D3DPT_TRIANGLEFAN || type == D3DPT_TRIANGLESTRIP) ? 4 : 0);
         const HRESULT result = g_device_hook.original_draw_primitive(
             device, type, start_vertex, primitive_count);
         EndTitleScreenClip(device, title_clip);
@@ -1794,6 +1798,10 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3D
                 device, base_vertex, min_vertex, num_vertices);
         const TitleScreenClipState title_clip = BeginTitleScreenClip(
             device, airport_date_hud);
+        const FontOutlineDraw outline(device,
+            num_vertices == 4 && primitive_count == 2 &&
+            (type == D3DPT_TRIANGLELIST || type == D3DPT_TRIANGLEFAN ||
+             type == D3DPT_TRIANGLESTRIP) ? 4 : 0);
         const HRESULT result = g_device_hook.original_draw_indexed_primitive(
             device, type, base_vertex, min_vertex, num_vertices, start_index, primitive_count);
         EndTitleScreenClip(device, title_clip);
@@ -1834,6 +1842,9 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMI
             PrimitiveVertexCount(type, primitive_count), stride);
         const TitleScreenClipState title_clip = BeginTitleScreenClip(
             device, airport_date_hud);
+        const FontOutlineDraw outline(device, draw_vertices,
+            (type == D3DPT_TRIANGLEFAN || type == D3DPT_TRIANGLESTRIP) &&
+            primitive_count == 2 ? 4 : 0, stride);
         const HRESULT result = g_device_hook.original_draw_primitive_up(
             device, type, primitive_count, draw_vertices, stride);
         EndTitleScreenClip(device, title_clip);
@@ -1855,6 +1866,10 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitiveUP(
             device, vertices, num_vertices, stride);
         const TitleScreenClipState title_clip = BeginTitleScreenClip(
             device, airport_date_hud);
+        const FontOutlineDraw outline(device, vertices,
+            min_vertex == 0 && num_vertices == 4 && primitive_count == 2 &&
+            (type == D3DPT_TRIANGLELIST || type == D3DPT_TRIANGLEFAN ||
+             type == D3DPT_TRIANGLESTRIP) ? 4 : 0, stride);
         const HRESULT result = g_device_hook.original_draw_indexed_primitive_up(
             device, type, min_vertex, num_vertices, primitive_count, indices,
             index_format, vertices, stride);

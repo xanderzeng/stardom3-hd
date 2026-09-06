@@ -88,6 +88,43 @@ bool IsInventoryTargetTree(void* object, void* primary_root) {
     return !child && count == 5 && stars == 15 && give;
 }
 
+bool IsSaveLoadPageTree(void* object, void* primary_root) {
+    if (!primary_root || !CanReadGuiObject(object) ||
+        GuiPointer(object, GuiObjectField::parent) != primary_root ||
+        GuiField<int>(object, GuiObjectField::width) != 800 ||
+        GuiField<int>(object, GuiObjectField::height) != 600) return false;
+    void* card = GuiPointer(object, GuiObjectField::first_child);
+    if (!CanReadGuiObject(card) || GuiPointer(card, GuiObjectField::next_sibling) ||
+        GuiField<int>(card, GuiObjectField::x) != 40 ||
+        GuiField<int>(card, GuiObjectField::y) != 31 ||
+        GuiField<int>(card, GuiObjectField::width) != 720 ||
+        GuiField<int>(card, GuiObjectField::height) != 537) return false;
+    unsigned rows = 0, labels = 0;
+    bool up = false, down = false, track = false, action = false, exit = false;
+    int count = 0;
+    void* child = GuiPointer(card, GuiObjectField::first_child);
+    for (; CanReadGuiObject(child) && count < 24; ++count) {
+        const int x = GuiField<int>(child, GuiObjectField::x);
+        const int y = GuiField<int>(child, GuiObjectField::y);
+        const int w = GuiField<int>(child, GuiObjectField::width);
+        const int h = GuiField<int>(child, GuiObjectField::height);
+        for (int row = 0; row < 6; ++row) {
+            if (x == 12 && y == 57 + row * 70 && w == 656 &&
+                h == (row == 2 ? 72 : 74)) rows |= 1u << row;
+            if (x == 14 && y == 77 + row * 70 && w == 50 && h == 20)
+                labels |= 1u << row;
+        }
+        up |= x == 675 && y == 60 && w == 28 && h == 79;
+        down |= x == 675 && y == 400 && w == 28 && h == 79;
+        track |= x == 675 && y == 139 && w == 28 && h == 261;
+        action |= x == 453 && y == 495 && w == 98 && h == 28;
+        exit |= x == 563 && y == 495 && w == 98 && h == 28;
+        child = GuiPointer(child, GuiObjectField::next_sibling);
+    }
+    return !child && count == 17 && rows == 63 && labels == 63 &&
+        up && down && track && action && exit;
+}
+
 bool IsInventoryPageTree(void* object, void* primary_root) {
     if (!primary_root || !CanReadGuiObject(object) ||
         GuiPointer(object, GuiObjectField::parent) != primary_root ||

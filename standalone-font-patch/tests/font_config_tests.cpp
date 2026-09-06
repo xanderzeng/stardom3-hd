@@ -36,6 +36,9 @@ int wmain() {
 
     auto config = stardom_font::LoadFontConfig(path);
     Check(config.enabled, "Enabled must default to true");
+    Check(config.font_outline_union, "outline improvements enabled by default");
+    WriteOption(path, L"FontOutlineUnion", L"0");
+    Check(!stardom_font::LoadFontConfig(path).font_outline_union, "outline option can be disabled");
     Check(config.font_name == L"SimHei",
           "FontName must default to SimHei");
     Check(config.font_scale == 1.00, "FontScale must default to 1.00");

@@ -12,11 +12,15 @@ add_library(d3d9 SHARED
     src/font_hook.h
     src/import_hook.cpp
     src/import_hook.h
+    src/outline_bridge.cpp
+    ../src/font_outline.cpp
+    ../src/gui_object.cpp
 )
+target_include_directories(d3d9 PRIVATE ../src)
 target_compile_features(d3d9 PRIVATE cxx_std_17)
 target_compile_definitions(d3d9 PRIVATE
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-target_link_libraries(d3d9 PRIVATE gdi32)
+target_link_libraries(d3d9 PRIVATE gdi32 user32)
 set_property(TARGET d3d9 PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set_target_properties(d3d9 PROPERTIES
@@ -45,6 +49,15 @@ set_property(TARGET font_patch_smoke PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_test(NAME font_config COMMAND font_config_tests)
+add_executable(font_outline_render_tests
+    ../tests/font_outline_render_tests.cpp ../src/gui_object.cpp)
+target_include_directories(font_outline_render_tests PRIVATE ../src src)
+target_compile_features(font_outline_render_tests PRIVATE cxx_std_17)
+target_compile_definitions(font_outline_render_tests PRIVATE
+    WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE STARDOM_STANDALONE_TEST)
+target_link_libraries(font_outline_render_tests PRIVATE user32)
+set_property(TARGET font_outline_render_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME font_outline_render COMMAND font_outline_render_tests)
 add_test(NAME font_patch_default
     COMMAND font_patch_smoke $<TARGET_FILE:d3d9> 1
         SimHei 1.00 SimHei 20)
