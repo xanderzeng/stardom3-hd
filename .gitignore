@@ -5,6 +5,7 @@
 /out/
 
 # Debug captures and local investigation artifacts
+/docs/
 /artifacts/
 /schedule-current.bmp
 *.bmp
