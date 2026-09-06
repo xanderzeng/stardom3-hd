@@ -95,6 +95,20 @@ void TestNativeBridge() {
         Check(g_inventory_contrast, "nested contrast scope restored");
     }
     Check(!g_inventory_contrast, "inventory contrast does not escape memo draw");
+    for (unsigned i = 0; i < 4; ++i) {
+        const DWORD body = 0x80FFFFFF;
+        std::memcpy(font + 0x58 + i * 4, &body, 4);
+    }
+    std::memcpy(before, font, sizeof(font));
+    {
+        InventoryTextContrast save_label(true, true);
+        Check(HookGlyphDraw(font, nullptr, 1, 2, 3, 4, 0x1A00, 6) == 17,
+              "save label white text receives dark outline");
+        Check(std::memcmp(before, font, sizeof(font)) == 0,
+              "save label palette restored after drawing");
+    }
+    Check(!g_inventory_contrast && !g_light_text_contrast,
+          "save contrast cannot leak to other pages");
     g_original = nullptr;
 }
 

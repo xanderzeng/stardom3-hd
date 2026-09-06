@@ -526,6 +526,11 @@ bool IsInventoryPage(void* object, void* parent, int, int) {
         IsInventoryPageTree(object, g_unified_ui.primary_root);
 }
 
+bool IsSaveLoadPage(void* object, void* parent, int, int) {
+    return parent == g_unified_ui.primary_root &&
+        IsSaveLoadPageTree(object, g_unified_ui.primary_root);
+}
+
 bool IsBigActivityPage(void* object, void* parent, int, int) {
     return parent == g_unified_ui.primary_root &&
         IsBigActivityPageTree(object, g_unified_ui.primary_root);
@@ -1983,6 +1988,9 @@ TitleNativeGeometry g_artist_contract_geometry[64]{};
 TitleNativeGeometry g_inventory_geometry[64]{};
 size_t g_inventory_geometry_count = 0;
 void* g_inventory_root = nullptr;
+TitleNativeGeometry g_save_load_geometry[256]{};
+size_t g_save_load_geometry_count = 0;
+void* g_save_load_root = nullptr;
 void* g_inventory_target_root = nullptr;
 TitleNativeGeometry g_inventory_target_geometry[8]{};
 size_t g_inventory_target_geometry_count = 0;
@@ -2344,6 +2352,17 @@ void ResetInventoryGeometry(void* root) {
     if (g_inventory_root == root) return;
     g_inventory_root = root;
     g_inventory_geometry_count = 0;
+}
+
+void ResetSaveLoadGeometry(void* root) {
+    if (g_save_load_root == root) return;
+    g_save_load_root = root;
+    g_save_load_geometry_count = 0;
+}
+
+void ScaleSaveLoadSubtree(void* object, int depth = 0) {
+    ScaleAspectFitSubtree(object, depth, g_save_load_geometry,
+        g_save_load_geometry_count, ResetSaveLoadGeometry, 6, 64);
 }
 
 void ScaleInventorySubtree(void* object, int depth = 0) {
@@ -2807,7 +2826,7 @@ bool IsAspectFittedTextObject(void* object) {
         g_title_native_root, g_title_tutorial_root, g_title_tutorial_bubble,
         g_title_tutorial_question_root, g_announcement_root,
         g_artist_profile_root, g_artist_contract_root, g_artist_signing_root,
-        g_inventory_root,
+        g_inventory_root, g_save_load_root,
         g_big_activity_root, g_big_activity_option_root,
         g_company_revenue_root, g_company_navigation_root,
         g_airport_selection_root, g_studio_event_list_root,
@@ -2867,6 +2886,23 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
         saved[i] = GuiField<int>(self, fields[i]);
     }
     const unsigned char auto_size = GuiField<unsigned char>(self, 0x134);
+    const auto* save_label = FindGeometry(
+        g_save_load_geometry, g_save_load_geometry_count, self);
+    InventoryTextContrast contrast(save_label != nullptr, true);
+    const int old_width = GuiField<int>(self, GuiObjectField::width);
+    const int old_height = GuiField<int>(self, GuiObjectField::height);
+    const unsigned char measured = GuiField<unsigned char>(self, 0x14C);
+    if (save_label) {
+        // The save controller rewrites money labels to 145x20 after reflow.
+        // Repair the draw/clip bounds from authored geometry on every draw.
+        GuiField<int>(self, GuiObjectField::width) =
+            MulDiv(save_label->width, viewport.width, LegacyCanvas::width);
+        GuiField<int>(self, GuiObjectField::height) =
+            MulDiv(save_label->height, viewport.height, LegacyCanvas::height);
+        // 0053072B skips measurement while the +14C reentry guard is set.
+        // Restore it with the native metrics after this temporary draw.
+        GuiField<unsigned char>(self, 0x14C) = 0;
+    }
     const auto fitted = FitPageTextMetrics(font, saved[1], viewport.height);
     GuiField<int>(self, 0x130) = fitted.font_size;
     GuiField<int>(self, 0x140) = fitted.line_gap;
@@ -2876,6 +2912,11 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
     GuiField<unsigned char>(self, 0x134) = 0;
     g_fitted_text_measure(self);
     g_fitted_text_draw(self, renderer, time, flags);
+    if (save_label) {
+        GuiField<int>(self, GuiObjectField::width) = old_width;
+        GuiField<int>(self, GuiObjectField::height) = old_height;
+        GuiField<unsigned char>(self, 0x14C) = measured;
+    }
     GuiField<unsigned char>(self, 0x134) = auto_size;
     for (size_t i = 0; i < std::size(fields); ++i) {
         GuiField<int>(self, fields[i]) = saved[i];
@@ -4767,6 +4808,8 @@ bool ReflowStaticAspectFitPage(void* child, void* parent, int width, int height)
          ScaleArtistSigningSubtree, "artist signing"},
         {g_inventory_root, IsInventoryPage, ResetInventoryGeometry,
          ScaleInventorySubtree, "inventory", PageRefreshPolicy::PreserveControllerState},
+        {g_save_load_root, IsSaveLoadPage, ResetSaveLoadGeometry,
+         ScaleSaveLoadSubtree, "save/load", PageRefreshPolicy::PreserveControllerState},
         {g_big_activity_root, IsBigActivityPage, ResetBigActivityGeometry,
          ScaleBigActivitySubtree, "large activity", PageRefreshPolicy::PreserveControllerState},
     };
@@ -5856,6 +5899,24 @@ bool MoveInventoryPage(PageMoveContext& context) {
     return true;
 }
 
+bool MoveSaveLoadPage(PageMoveContext& context) {
+    auto& [self, parent, x, y, original, executable, immediate_call] = context;
+    if (!g_save_load_root && IsSaveLoadPageTree(self, g_unified_ui.primary_root)) {
+        ResetSaveLoadGeometry(self);
+        RememberLayoutRoot(self);
+        ScaleSaveLoadSubtree(self);
+        return true;
+    }
+    const StaticPageMoveRule rule{g_save_load_root, g_save_load_geometry,
+        std::size(g_save_load_geometry), &g_save_load_geometry_count, 6,
+        PageMoveCoordinates::SubmittedNative};
+    if (!ApplyStaticPageMove(&rule, 1, self, parent,
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height),
+            x, y, IsRepeatedObjectPosition)) return false;
+    original(self, x, y);
+    return true;
+}
+
 bool MoveBigActivityPage(PageMoveContext& context) {
     auto& [self, parent, x, y, original, executable, immediate_call] = context;
     if (!g_big_activity_root &&
@@ -6260,6 +6321,7 @@ bool DispatchAspectFitPageMove(PageMoveContext& context) {
         MoveTitlePage,
         MoveStaticPage,
         MoveInventoryPage,
+        MoveSaveLoadPage,
         MoveBigActivityPage,
         MoveCompanyNavigationPage,
         MoveCompanySectionPage,

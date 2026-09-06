@@ -26,6 +26,7 @@ struct GlyphDraw {
 };
 thread_local GlyphDraw* g_glyph = nullptr;
 thread_local bool g_inventory_contrast = false;
+thread_local bool g_light_text_contrast = false;
 using NativeGlyphDraw = DWORD (__thiscall*)(void*, DWORD, DWORD, DWORD,
                                           DWORD, DWORD, DWORD);
 NativeGlyphDraw g_original = nullptr;
@@ -36,9 +37,13 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
     bool contrast = g_inventory_contrast && colors[0x51] == 0;
     for (unsigned i = 0; i < 4; ++i) {
         // Native inventory description #DADAD8, stored as RGBA bytes.
-        contrast &= colors[0x58 + i * 4] == 0xDA &&
+        contrast &= g_light_text_contrast ?
+                    (colors[0x58 + i * 4] >= 192 &&
+                     colors[0x59 + i * 4] >= 192 &&
+                     colors[0x5A + i * 4] >= 192) :
+                    (colors[0x58 + i * 4] == 0xDA &&
                     colors[0x59 + i * 4] == 0xDA &&
-                    colors[0x5A + i * 4] == 0xD8;
+                    colors[0x5A + i * 4] == 0xD8);
     }
     unsigned char saved_outline[16];
     if (contrast) {
@@ -219,9 +224,15 @@ IDirect3DPixelShader9* Shader(IDirect3DDevice9* d, IDirect3DBaseTexture9* t) {
 
 } // namespace
 
-InventoryTextContrast::InventoryTextContrast(bool enabled)
-    : saved_(g_inventory_contrast) { g_inventory_contrast = enabled; }
-InventoryTextContrast::~InventoryTextContrast() { g_inventory_contrast = saved_; }
+InventoryTextContrast::InventoryTextContrast(bool enabled, bool light_text)
+    : saved_(g_inventory_contrast), saved_light_(g_light_text_contrast) {
+    g_inventory_contrast = enabled;
+    g_light_text_contrast = light_text;
+}
+InventoryTextContrast::~InventoryTextContrast() {
+    g_inventory_contrast = saved_;
+    g_light_text_contrast = saved_light_;
+}
 
 FontOutlineDraw::FontOutlineDraw(IDirect3DDevice9* d, UINT count)
     : FontOutlineDraw(d, g_glyph ? g_glyph->native_vertices : nullptr,

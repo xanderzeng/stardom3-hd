@@ -36,6 +36,7 @@ bool IsDescendantOf(void* object, void* root, int maximum_depth = 10);
 // ItemList.txt: one card, three movable tabs, five fixed item rows and a
 // complete scroll/exit column. Tab positions change with the selected category.
 bool IsInventoryPageTree(void* object, void* primary_root);
+bool IsSaveLoadPageTree(void* object, void* primary_root);
 bool IsInventoryTargetTree(void* object, void* primary_root);
 // ItemTarget controller mixes fitted card coordinates with native offsets.
 void FitInventoryTargetPosition(int card_x, int card_y, int viewport_x,

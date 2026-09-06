@@ -568,6 +568,64 @@ bool TestPageGroupMoves() {
 
 }  // namespace
 
+bool TestSaveLoadPage() {
+    using namespace stardom;
+    bool ok = true;
+    TestGuiObject primary{}, root{}, card{}, controls[17]{};
+    SetGeometry(root, 560, 240, 800, 600);
+    SetGeometry(card, 40, 31, 720, 537);
+    GuiField<void*>(root.bytes, GuiObjectField::parent) = primary.bytes;
+    GuiField<void*>(root.bytes, GuiObjectField::first_child) = card.bytes;
+    GuiField<void*>(card.bytes, GuiObjectField::parent) = root.bytes;
+    GuiField<void*>(card.bytes, GuiObjectField::first_child) = controls[0].bytes;
+    for (int i = 0; i < 17; ++i) {
+        GuiField<void*>(controls[i].bytes, GuiObjectField::parent) = card.bytes;
+        GuiField<void*>(controls[i].bytes, GuiObjectField::next_sibling) =
+            i == 16 ? nullptr : controls[i + 1].bytes;
+    }
+    for (int i = 0; i < 6; ++i) {
+        SetGeometry(controls[i], 12, 57 + 70 * i, 656, i == 2 ? 72 : 74);
+        SetGeometry(controls[i + 6], 14, 77 + 70 * i, 50, 20);
+    }
+    SetGeometry(controls[12], 675, 60, 28, 79);
+    SetGeometry(controls[13], 675, 400, 28, 79);
+    SetGeometry(controls[14], 675, 139, 28, 261);
+    SetGeometry(controls[15], 453, 495, 98, 28);
+    SetGeometry(controls[16], 563, 495, 98, 28);
+    ok &= Expect(IsSaveLoadPageTree(root.bytes, primary.bytes), "shared save/load resource tree matches");
+    ok &= Expect(!IsInventoryPageTree(root.bytes, primary.bytes), "save/load is independent of inventory");
+    SetGeometry(controls[13], 675, 410, 28, 79);
+    ok &= Expect(!IsSaveLoadPageTree(root.bytes, primary.bytes), "wrong scrollbar rejected");
+    SetGeometry(controls[13], 675, 400, 28, 79);
+    GuiField<void*>(controls[16].bytes, GuiObjectField::next_sibling) = controls[0].bytes;
+    ok &= Expect(!IsSaveLoadPageTree(root.bytes, primary.bytes), "cyclic save/load controls rejected");
+    GuiField<void*>(controls[16].bytes, GuiObjectField::next_sibling) = nullptr;
+    NativeGeometry cache[20]{};
+    size_t count = 0;
+    RememberGeometry(cache, 20, count, card.bytes);
+    for (auto& c : controls) RememberGeometry(cache, 20, count, c.bytes);
+    const StaticPageMoveRule rule{root.bytes, cache, 20, &count, 6, PageMoveCoordinates::SubmittedNative};
+    repeated_position = false;
+    int x = 40, y = 31;
+    ok &= Expect(ApplyStaticPageMove(&rule, 1, card.bytes, root.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+        x == 72 && y == 56 && GuiField<int>(card.bytes, GuiObjectField::width) == 1296 &&
+        GuiField<int>(card.bytes, GuiObjectField::height) == 967, "save/load card fits inside 1080p canvas");
+    for (int i = 0; i < 6; ++i) {
+        x = 12; y = 57 + 70 * i;
+        ok &= Expect(ApplyStaticPageMove(&rule, 1, controls[i].bytes, card.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+            x == 22 && y == 103 + 126 * i && GuiField<int>(controls[i].bytes, GuiObjectField::width) == 1181,
+            "six clickable save rows scale with rendered slots");
+    }
+    x = 563; y = 495;
+    ok &= Expect(ApplyStaticPageMove(&rule, 1, controls[16].bytes, card.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+        x == 1013 && y == 891, "exit button remains within enlarged panel");
+    repeated_position = true;
+    ok &= Expect(ApplyStaticPageMove(&rule, 1, controls[16].bytes, card.bytes, 1920, 1080, x, y, IsRepeatedForTest) &&
+        x == 1013 && y == 891, "refresh must not double scale exit hit target");
+    repeated_position = false;
+    return ok;
+}
+
 bool TestInventoryPage() {
     using namespace stardom;
     bool ok = true;
@@ -761,6 +819,7 @@ bool TestActivityOptionChildCoverage() {
 int main() {
     using namespace stardom;
     bool ok = TestInventoryPage();
+    ok &= TestSaveLoadPage();
     ok &= TestInventoryTarget();
     ok &= TestBigActivityPages();
     ok &= TestActivityOptionChildCoverage();
