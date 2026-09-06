@@ -6,6 +6,7 @@ namespace stardom_font {
 
 struct FontConfig {
     bool enabled = true;
+    bool font_outline_union = true;
     std::wstring font_name = L"SimHei";
     double font_scale = 1.00;
     std::wstring small_font_name = L"SimSun";

@@ -46,6 +46,8 @@ double ReadFontScale(const std::wstring& ini_path, const wchar_t* key) {
 
 FontConfig LoadFontConfig(const std::wstring& ini_path) {
     FontConfig config;
+    config.font_outline_union = GetPrivateProfileIntW(
+        L"FontPatch", L"FontOutlineUnion", 1, ini_path.c_str()) != 0;
     config.enabled = GetPrivateProfileIntW(
         L"FontPatch", L"Enabled", 1, ini_path.c_str()) != 0;
     config.font_name = ReadFontName(

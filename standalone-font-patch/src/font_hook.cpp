@@ -93,6 +93,8 @@ HFONT WINAPI HookCreateFontIndirectA(const LOGFONTA* font) {
 
 }  // namespace
 
+bool OutlineEnabled() { return Config().enabled && Config().font_outline_union; }
+
 bool InstallFontHook() {
     if (g_hook_attempted) {
         return g_create_font_hook.slot != nullptr;

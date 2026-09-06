@@ -1,5 +1,4 @@
 #include "font_outline.h"
-#include "d3d9_proxy_internal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +9,9 @@ alignas(DWORD)
 #include "font_outline_shader.h"
 
 namespace stardom {
+// Supplied by each host; the shared renderer has no widescreen dependency.
+void Log(const char*, ...);
+bool IsDebugModeEnabled();
 namespace {
 
 struct Vertex { float x, y, z, rhw; DWORD color; float u, v; };
@@ -34,10 +36,13 @@ NativeGlyphDraw g_original = nullptr;
 DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
                               DWORD a3, DWORD a4, DWORD flags, DWORD a6) {
     auto* colors = static_cast<unsigned char*>(self);
-    bool contrast = g_inventory_contrast && colors[0x51] == 0;
+    DWORD cell = 0;
+    std::memcpy(&cell, colors + 8, sizeof(cell));
+    const bool small_outline = cell >= 8 && cell <= 16 && (flags & 0x200);
+    bool contrast = (g_inventory_contrast || small_outline) && colors[0x51] == 0;
     for (unsigned i = 0; i < 4; ++i) {
         // Native inventory description #DADAD8, stored as RGBA bytes.
-        contrast &= g_light_text_contrast ?
+        contrast &= (g_light_text_contrast || small_outline) ?
                     (colors[0x58 + i * 4] >= 192 &&
                      colors[0x59 + i * 4] >= 192 &&
                      colors[0x5A + i * 4] >= 192) :
@@ -65,17 +70,10 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
     // alone; otherwise the draw sequence would not be four borders + body.
     const bool eligible = (flags & 0x200) != 0 &&
         static_cast<const unsigned char*>(self)[0x51] == 0;
-    bool light_outline = eligible;
     const auto* palette = static_cast<const unsigned char*>(self);
-    for (unsigned vertex = 0; vertex < 4; ++vertex) {
-        for (unsigned channel = 0; channel < 3; ++channel) {
-            // Foreground color is independent of outline coverage. In
-            // particular, the ranking labels use blue #086DB3, not black.
-            light_outline &= palette[0x78 + vertex * 4 + channel] >= 192;
-        }
-    }
-    light_outline |= contrast;
-    g_glyph = light_outline ? &draw : nullptr;
+    // Coverage union is color-independent, including colored small-font
+    // borders. The old light-border filter left those on repeated blending.
+    g_glyph = eligible ? &draw : nullptr;
     const DWORD result = g_original(self, glyph, a2, a3, a4, flags, a6);
     g_glyph = saved;
     if ((flags & 0x200) && IsDebugModeEnabled()) {
@@ -98,7 +96,7 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
             key.flags = flags;
             key.passes = draw.pass;
             key.shadow = palette[0x51] != 0;
-            key.eligible = light_outline;
+            key.eligible = eligible;
             key.fallback = draw.disabled;
             const auto same = [&](const ReportKey& p) {
                 return p.width == key.width && p.height == key.height &&
@@ -319,6 +317,19 @@ FontOutlineDraw::~FontOutlineDraw() {
         device_->SetPixelShader(nullptr);
         device_->SetPixelShaderConstantF(0, constants_, 9);
     }
+}
+
+void UninstallFontOutlineHook(HMODULE executable) {
+    if (!g_original || !executable) return;
+    auto* target = reinterpret_cast<unsigned char*>(executable) + 0x16ABC0;
+    DWORD protection;
+    if (!VirtualProtect(target, 6, PAGE_EXECUTE_READWRITE, &protection)) return;
+    std::memcpy(target, reinterpret_cast<void*>(g_original), 6);
+    DWORD ignored;
+    VirtualProtect(target, 6, protection, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), target, 6);
+    VirtualFree(reinterpret_cast<void*>(g_original), 0, MEM_RELEASE);
+    g_original = nullptr;
 }
 
 bool InstallFontOutlineHook(HMODULE executable) {

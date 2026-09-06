@@ -5,10 +5,15 @@
 #include <cstdlib>
 #include <vector>
 
+#ifdef STARDOM_STANDALONE_TEST
+#include "../standalone-font-patch/src/outline_bridge.cpp"
+namespace stardom_font { bool OutlineEnabled() { return true; } }
+#else
 namespace stardom {
 void Log(const char*, ...) {}
 bool IsDebugModeEnabled() { return false; }
 }
+#endif
 
 namespace {
 int failures = 0;
@@ -21,6 +26,38 @@ void Require(HRESULT hr, const char* operation) {
         std::exit(2);
     }
 }
+#ifdef STARDOM_STANDALONE_TEST
+bool expected_contrast = false;
+void __fastcall ObserveLabel(void*, void*, void*, DWORD, DWORD) {
+    Check(stardom::g_inventory_contrast == expected_contrast,
+          "standalone scopes contrast to the native page");
+}
+void TestStandaloneScopes() {
+    using namespace stardom;
+    unsigned char root[0x200]{}, card[0x200]{}, label[0x200]{};
+    GuiField<int>(root,GuiObjectField::width)=800;
+    GuiField<int>(root,GuiObjectField::height)=600;
+    GuiField<void*>(card,GuiObjectField::parent)=root;
+    GuiField<void*>(label,GuiObjectField::parent)=card;
+    GuiField<int>(card,GuiObjectField::width)=720;
+    GuiField<int>(card,GuiObjectField::height)=537;
+    stardom_font::label_draw=reinterpret_cast<stardom_font::TextDraw>(&ObserveLabel);
+    stardom_font::memo_draw=stardom_font::label_draw;
+    expected_contrast=true;
+    stardom_font::Label(label,nullptr,nullptr,0,0);
+    GuiField<int>(card,GuiObjectField::width)=420;
+    GuiField<int>(card,GuiObjectField::height)=542;
+    GuiField<int>(label,GuiObjectField::width)=200;
+    GuiField<int>(label,GuiObjectField::height)=60;
+    stardom_font::Memo(label,nullptr,nullptr,0,0);
+    expected_contrast=false;
+    stardom_font::Label(label,nullptr,nullptr,0,0);
+    GuiField<int>(card,GuiObjectField::height)=500;
+    stardom_font::Memo(label,nullptr,nullptr,0,0);
+    Check(!g_inventory_contrast && !g_light_text_contrast,"standalone page state restored");
+    stardom_font::label_draw=nullptr;stardom_font::memo_draw=nullptr;
+}
+#endif
 constexpr int extent = 24;
 constexpr int tex_size = 8;
 unsigned char pixels[tex_size * tex_size];
@@ -72,10 +109,10 @@ void TestNativeBridge() {
     font[0x51] = 1;
     Check(native(font, 1, 2, 3, 4, 0x200, 6) == 0, "extra shadow excluded");
     font[0x51] = 0; font[0x78] = 0;
-    Check(native(font, 1, 2, 3, 4, 0x200, 6) == 0, "dark outline excluded");
+    Check(native(font, 1, 2, 3, 4, 0x200, 6) == 0x12345678, "colored and dark outlines use union too");
     g_glyph = nullptr;
-    VirtualFree(reinterpret_cast<void*>(g_original), 0, MEM_RELEASE);
-    g_original = nullptr;
+    UninstallFontOutlineHook(reinterpret_cast<HMODULE>(image));
+    Check(!g_original && std::memcmp(target, entry, 6) == 0, "native detour restores on unload");
     VirtualFree(image, 0, MEM_RELEASE);
     unsigned char before[sizeof(font)];
     for (unsigned i = 0; i < 4; ++i) {
@@ -109,6 +146,14 @@ void TestNativeBridge() {
     }
     Check(!g_inventory_contrast && !g_light_text_contrast,
           "save contrast cannot leak to other pages");
+    for (DWORD cell : {12u,16u}) {
+        std::memcpy(font + 8, &cell, 4);
+        std::memcpy(before, font, sizeof(font));
+        Check(HookGlyphDraw(font, nullptr, 1, 2, 3, 4, 0x1A00, 6) == 17,
+              "small light text gains contrast without page scope");
+        Check(std::memcmp(before, font, sizeof(font)) == 0,
+              "small-font glyph restores shared palette");
+    }
     g_original = nullptr;
 }
 
@@ -137,7 +182,7 @@ void DrawCase(IDirect3DDevice9* d, IDirect3DSurface9* readback,
     g_glyph = &context;
     IDirect3DVertexBuffer9* buffer = nullptr;
     IDirect3DIndexBuffer9* indices = nullptr;
-    if (path) {
+    if (path == 1 || path == 2) {
         Require(d->CreateVertexBuffer(4 * sizeof(Vertex), D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
             D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1, D3DPOOL_DEFAULT, &buffer, nullptr), "dynamic vertex buffer");
         if (path == 2) {
@@ -169,7 +214,7 @@ void DrawCase(IDirect3DDevice9* d, IDirect3DSurface9* readback,
         for (unsigned i = 0; i < 36; ++i) saved[i] = .03125f * (i + 1);
         Require(d->SetPixelShaderConstantF(0, saved, 9), "seed shader constants");
         context.native_vertices = vertices;
-        if (path) {
+        if (path == 1 || path == 2) {
             void* data = nullptr;
             Require(buffer->Lock(0, sizeof(vertices), &data, D3DLOCK_DISCARD), "vertex upload");
             std::memcpy(data, vertices, sizeof(vertices)); buffer->Unlock();
@@ -177,15 +222,24 @@ void DrawCase(IDirect3DDevice9* d, IDirect3DSurface9* readback,
         }
         Require(d->BeginScene(), "begin");
         if (!path) {
+#ifndef STARDOM_STANDALONE_TEST
             FontOutlineDraw scope(d, vertices, 4, sizeof(Vertex));
-            Check(context.pass == pass + 1 && !context.disabled, "production shader was engaged");
+#endif
             Require(d->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, vertices, sizeof(Vertex)), "draw");
+        } else if (path == 3) {
+#ifndef STARDOM_STANDALONE_TEST
+            FontOutlineDraw scope(d, vertices, 4, sizeof(Vertex));
+#endif
+            const WORD triangles[] = {0,1,2,0,2,3};
+            Require(d->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST,0,4,2,triangles,D3DFMT_INDEX16,vertices,sizeof(Vertex)), "indexed UP draw");
         } else {
+#ifndef STARDOM_STANDALONE_TEST
             FontOutlineDraw scope(d, 4);
-            Check(context.pass == pass + 1 && !context.disabled, "streamed native glyph shader was engaged");
+#endif
             Require(path == 1 ? d->DrawPrimitive(D3DPT_TRIANGLEFAN, 0, 2) :
                 d->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2), "streamed draw");
         }
+        Check(context.pass == pass + 1 && !context.disabled, "production shader engaged through draw path");
         Require(d->EndScene(), "end");
         IDirect3DPixelShader9* current = nullptr;
         Require(d->GetPixelShader(&current), "get restored shader");
@@ -235,6 +289,9 @@ void DrawCase(IDirect3DDevice9* d, IDirect3DSurface9* readback,
 int main() {
     using namespace stardom;
     TestNativeBridge();
+#ifdef STARDOM_STANDALONE_TEST
+    TestStandaloneScopes();
+#endif
     const HINSTANCE instance = GetModuleHandleW(nullptr);
     WNDCLASSW wc{}; wc.lpfnWndProc = DefWindowProcW; wc.hInstance = instance; wc.lpszClassName = L"OutlineTest";
     RegisterClassW(&wc);
@@ -250,6 +307,12 @@ int main() {
     pp.hDeviceWindow = window;
     pp.EnableAutoDepthStencil = TRUE; pp.AutoDepthStencilFormat = D3DFMT_D16;
     IDirect3DDevice9* device = nullptr;
+#ifdef STARDOM_STANDALONE_TEST
+    auto** api_table = *reinterpret_cast<void***>(api);
+    void* saved_create = api_table[16];
+    Check(stardom_font::PatchSlot(api_table+16,reinterpret_cast<void*>(&stardom_font::CreateDevice)),
+          "standalone create-device hook installs");
+#endif
     Require(api->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
         D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &device), "create D3D9 device");
     Require(device->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1), "FVF");
@@ -281,7 +344,7 @@ int main() {
         D3DPOOL_SYSTEMMEM, &readback, nullptr), "readback surface");
     for (bool linear : {false, true}) for (unsigned opacity : {255u, 128u})
         for (bool clipped : {false, true}) for (DWORD body : {0u, 0x086DB3u})
-            for (unsigned path : {0u, 1u, 2u})
+            for (unsigned path : {0u, 1u, 2u, 3u})
                 DrawCase(device, readback, linear, opacity, clipped, body, path);
     // RenderWare keeps depth testing on for 2D glyphs. With equal depth and
     // LESSEQUAL, coverage union must still work when depth writes are on.
@@ -326,6 +389,10 @@ int main() {
     readback->Release();
     device->SetTexture(0, nullptr);
     texture->Release();
+#ifdef STARDOM_STANDALONE_TEST
+    stardom_font::DetachOutline();
+    Check(api_table[16] == saved_create, "standalone restores vtable on unload");
+#endif
     Check(device->Release() == 0, "atlas-owned shader does not retain device after cleanup");
     api->Release(); DestroyWindow(window); UnregisterClassW(wc.lpszClassName, instance);
     FreeLibrary(runtime);

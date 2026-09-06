@@ -7,6 +7,7 @@ namespace stardom {
 
 // Only active inside the verified native, five-pass glyph draw routine.
 bool InstallFontOutlineHook(HMODULE executable);
+void UninstallFontOutlineHook(HMODULE executable);
 
 // Restricts added contrast to the inventory description currently rendering.
 class InventoryTextContrast {
