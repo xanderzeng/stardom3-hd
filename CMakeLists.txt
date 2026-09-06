@@ -3,6 +3,13 @@ project(Stardom3Widescreen LANGUAGES CXX)
 
 enable_testing()
 
+add_executable(training_animation_tests tests/training_animation_tests.cpp)
+target_compile_features(training_animation_tests PRIVATE cxx_std_17)
+target_include_directories(training_animation_tests PRIVATE src)
+target_compile_definitions(training_animation_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET training_animation_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME training_animation COMMAND training_animation_tests)
+
 add_library(d3d9 SHARED
     src/d3d9_proxy.cpp
     src/display_config.cpp

@@ -4,6 +4,7 @@
 #include "ui_page_geometry.h"
 #include "ui_dispatch.h"
 #include "font_outline.h"
+#include "training_animation.h"
 
 #include <intrin.h>
 
@@ -2697,10 +2698,24 @@ void DiscoverVisibleCompanyNavigation() {
 
 using GuiAnimateMoveFn = void(__thiscall*)(void*, int, int, float);
 GuiAnimateMoveFn g_company_animate_move = nullptr;
+NativeGeometry* FindTrainingGeometry(void* object);
+void* g_training_native_update_root = nullptr;
+bool g_training_bubble_native_positions = false;
 
 void __fastcall HookCompanyAnimateMove(void* self, void*, int x, int y,
                                        float duration) {
     GuiObjectReadBatch read_batch;
+    if (FindTrainingGeometry(self)) {
+        if (g_training_native_update_root || g_training_bubble_native_positions) {
+            g_company_animate_move(self, x, y, duration);
+        } else {
+            const auto viewport = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+            StartTrainingAnimation(self, GuiObjectField::x, viewport.width, viewport.height,
+                [&] { g_company_animate_move(self, x, y, duration); });
+        }
+        return;
+    }
     if (CanReadGuiObject(self)) {
         DiscoverCompanyNavigation(GuiPointer(self, GuiObjectField::parent));
         void* parent = GuiPointer(self, GuiObjectField::parent);
@@ -2911,7 +2926,29 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
     // Disable auto-resize during this render-only measurement.
     GuiField<unsigned char>(self, 0x134) = 0;
     g_fitted_text_measure(self);
-    g_fitted_text_draw(self, renderer, time, flags);
+    const auto* training_label = FindTrainingGeometry(self);
+    const bool answer_label = training_label && training_label->x == 25 &&
+        training_label->y == 225 && training_label->width == 340 &&
+        training_label->height == 60 && g_unified_ui.executable_base &&
+        (self == GuiPointer(g_unified_ui.executable_base, 0x3C12A8) ||
+         self == GuiPointer(g_unified_ui.executable_base, 0x3C12AC));
+    bool drawn = false;
+    if (answer_label) {
+        char* text = GuiField<char*>(self, 0x128);
+        const int label_x = GuiField<int>(self, GuiObjectField::x);
+        drawn = DrawTrainingAnswerCells(text, [&](int cell, char* glyph) {
+            const int offset = cell * fitted.font_size;
+            GuiField<char*>(self, 0x128) = glyph;
+            GuiField<int>(self, GuiObjectField::x) = label_x + offset;
+            GuiField<int>(self, GuiObjectField::width) = std::max(0, old_width - offset);
+            g_fitted_text_measure(self);
+            g_fitted_text_draw(self, renderer, time, flags);
+        });
+        GuiField<char*>(self, 0x128) = text;
+        GuiField<int>(self, GuiObjectField::x) = label_x;
+        GuiField<int>(self, GuiObjectField::width) = old_width;
+    }
+    if (!drawn) g_fitted_text_draw(self, renderer, time, flags);
     if (save_label) {
         GuiField<int>(self, GuiObjectField::width) = old_width;
         GuiField<int>(self, GuiObjectField::height) = old_height;
@@ -3332,6 +3369,89 @@ void ScaleTrainingActivitySubtree(void* object, int depth = 0) {
     ScaleAspectFitSubtree(
         object, depth, g_training_activity_geometry,
         g_training_activity_geometry_count, RememberTrainingActivityRoot, 8, 256);
+}
+
+using TrainingBubbleUpdateFn = void(__thiscall*)(void*);
+TrainingBubbleUpdateFn g_training_bubble_update = nullptr;
+TrainingBubbleUpdateFn g_training_stage_update = nullptr;
+GuiAnimateMoveFn g_training_animate_size = nullptr;
+GuiResizeFn g_training_resize = nullptr;
+
+NativeGeometry* FindTrainingGeometry(void* object) {
+    auto* native = FindGeometry(g_training_activity_geometry,
+        g_training_activity_geometry_count, object);
+    if (!native || !CanReadGuiObject(object)) return nullptr;
+    for (size_t i = 0; i < g_training_activity_root_count; ++i) {
+        if (IsDescendantOf(object, g_training_activity_roots[i])) return native;
+    }
+    return nullptr;
+}
+
+void __fastcall HookTrainingAnimateSize(void* self, void*, int width, int height, float duration) {
+    GuiObjectReadBatch read_batch;
+    if (FindTrainingGeometry(self) && !g_training_native_update_root) {
+        const auto viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+        StartTrainingAnimation(self, GuiObjectField::width, viewport.width, viewport.height,
+            [&] { g_training_animate_size(self, width, height, duration); });
+    } else {
+        g_training_animate_size(self, width, height, duration);
+    }
+}
+
+void __fastcall HookTrainingResize(void* self, void*, int width, int height) {
+    GuiObjectReadBatch read_batch;
+    if (auto* native = FindTrainingGeometry(self)) {
+        native->width = width;
+        native->height = height;
+        if (!g_training_native_update_root) {
+            const auto viewport = AspectFitLegacyCanvas(
+                static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+            width = MulDiv(width, viewport.width, LegacyCanvas::width);
+            height = MulDiv(height, viewport.height, LegacyCanvas::height);
+        }
+    }
+    g_training_resize(self, width, height);
+}
+
+void __fastcall HookTrainingStageUpdate(void* self, void*) {
+    GuiObjectReadBatch read_batch;
+    void* root = GuiPointer(self, 0x20C);
+    if (!IsTrainingActivityRoot(root) || g_training_native_update_root) {
+        g_training_stage_update(self);
+        return;
+    }
+    NativeGeometry* objects[1024]{};
+    size_t count = 0;
+    for (size_t i = 0; i < g_training_activity_geometry_count; ++i) {
+        auto& native = g_training_activity_geometry[i];
+        if (native.object != root && IsDescendantOf(native.object, root)) objects[count++] = &native;
+    }
+    const auto viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+    g_training_native_update_root = root;
+    UpdateTrainingNativeObjects(objects, count, viewport.width, viewport.height,
+        [&] { g_training_stage_update(self); });
+    g_training_native_update_root = nullptr;
+}
+
+void __fastcall HookTrainingBubbleUpdate(void* self, void*) {
+    GuiObjectReadBatch read_batch;
+    const auto viewport = AspectFitLegacyCanvas(
+        static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+    g_training_bubble_native_positions = true;
+    UpdateTrainingBubbles(self, viewport.width, viewport.height,
+        [](void* bubble) -> const NativeGeometry* {
+            if (!CanReadGuiObject(bubble)) return nullptr;
+            auto* native = FindGeometry(g_training_activity_geometry,
+                g_training_activity_geometry_count, bubble);
+            if (!native) return nullptr;
+            for (size_t i = 0; i < g_training_activity_root_count; ++i) {
+                if (IsDescendantOf(bubble, g_training_activity_roots[i])) return native;
+            }
+            return nullptr;
+        }, g_training_bubble_update);
+    g_training_bubble_native_positions = false;
 }
 
 void ResetTitleTutorialGeometry(void* root) {
@@ -6248,6 +6368,28 @@ bool MoveTrainingFramePage(PageMoveContext& context) {
 bool MoveTrainingActivitiesPage(PageMoveContext& context) {
     auto& [self, parent, x, y, original, executable, immediate_call] = context;
     auto* bytes = static_cast<unsigned char*>(self);
+    if (g_training_native_update_root && IsDescendantOf(self, g_training_native_update_root)) {
+        original(self, x, y);
+        return true;
+    }
+    const uintptr_t call_rva = reinterpret_cast<uintptr_t>(immediate_call) -
+        reinterpret_cast<uintptr_t>(executable);
+    // SpeakSkill's click effects subtract native offsets from the bubble's
+    // fitted position (004D4B20). Preserve the position and fit only the offset.
+    const int effect_offset = call_rva == 0xD4B3C ? -45 :
+        call_rva == 0xD4B74 ? -32 : call_rva == 0xD4BA6 ? -42 :
+        call_rva == 0xD5C84 ? -5 : call_rva == 0xD64D3 ? -15 : 0;
+    const bool memory_effect = call_rva == 0xD5594 || call_rva == 0xD5620;
+    if ((effect_offset || memory_effect || call_rva == 0xD5B82 ||
+            call_rva == 0x118681 || call_rva == 0x119055) &&
+            FindTrainingGeometry(self)) {
+        const auto viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+        FitTrainingCopiedPosition(x, y, memory_effect ? 5 : effect_offset,
+            memory_effect ? 25 : effect_offset, viewport.width, viewport.height);
+        original(self, x, y);
+        return true;
+    }
     // Activity roots coexist and share a cache; preserve roots-first group
     // dispatch rather than treating each root as an independent page rule.
     const StaticPageMoveRule training_activities{
@@ -6258,7 +6400,9 @@ bool MoveTrainingActivitiesPage(PageMoveContext& context) {
                             g_training_activity_root_count, self, parent,
                             static_cast<int>(g_unified_ui.width),
                             static_cast<int>(g_unified_ui.height), x, y,
-                            IsRepeatedObjectPosition)) {
+                            (call_rva == 0x118AC3 || call_rva == 0x118A4B)
+                                ? +[](void*, int, int) { return false; }
+                                : IsRepeatedObjectPosition)) {
         original(self, x, y);
         return true;
     }
@@ -6359,6 +6503,19 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
         world_source_return = return_slot[3];
     }
     void* parent = GuiField<void*>(bytes, GuiObjectField::parent);
+    if (executable && immediate_call == static_cast<unsigned char*>(
+            static_cast<void*>(executable)) + 0xD20D6 && parent == g_unified_ui.primary_root) {
+        // 00_CameraCursor is a separate 97x72 root, outside the activity
+        // playfield. Its controller already receives output mouse coordinates.
+        const auto viewport = AspectFitLegacyCanvas(
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+        GuiField<int>(self, GuiObjectField::width) = MulDiv(97, viewport.width, LegacyCanvas::width);
+        GuiField<int>(self, GuiObjectField::height) = MulDiv(72, viewport.height, LegacyCanvas::height);
+        FitTrainingCopiedPosition(x, y, -50, -36, viewport.width, viewport.height);
+        RememberProcessedLayoutObject(self);
+        original(self, x, y);
+        return;
+    }
     if (!g_company_navigation_root) {
         // Construction/show callbacks can arrive before the next BeginScene.
         DiscoverCompanyNavigation(parent);
@@ -6727,6 +6884,59 @@ void __fastcall HookGuiMove(void* self, void*, int x, int y) {
     original(self, x, y);
 }
 
+template <typename Original, typename Hook, size_t N>
+bool InstallTrainingHook(HMODULE executable, size_t rva,
+        const unsigned char (&expected)[N], Original& original, Hook hook) {
+    static_assert(N >= 5);
+    if (original) return true;
+    auto* target = reinterpret_cast<unsigned char*>(executable) + rva;
+    if (std::memcmp(target, expected, sizeof(expected)) != 0) {
+        Log("Training animation hook signature mismatch at %p", target);
+        return false;
+    }
+    auto* trampoline = static_cast<unsigned char*>(VirtualAlloc(
+        nullptr, sizeof(expected) + 5, MEM_COMMIT | MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE));
+    if (!trampoline) return false;
+    std::memcpy(trampoline, expected, sizeof(expected));
+    trampoline[sizeof(expected)] = 0xE9;
+    *reinterpret_cast<int32_t*>(trampoline + sizeof(expected) + 1) =
+        static_cast<int32_t>(target - trampoline - 5);
+    DWORD protection = 0;
+    if (!VirtualProtect(target, sizeof(expected), PAGE_EXECUTE_READWRITE, &protection)) {
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        return false;
+    }
+    original = reinterpret_cast<Original>(trampoline);
+    target[0] = 0xE9;
+    *reinterpret_cast<int32_t*>(target + 1) = static_cast<int32_t>(
+        reinterpret_cast<unsigned char*>(hook) - target - 5);
+    for (size_t i = 5; i < N; ++i) target[i] = 0x90;
+    DWORD ignored = 0;
+    VirtualProtect(target, sizeof(expected), protection, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), trampoline, sizeof(expected) + 5);
+    FlushInstructionCache(GetCurrentProcess(), target, sizeof(expected));
+    Log("Installed training native-coordinate animation hook at %p", target);
+    return true;
+}
+
+bool InstallTrainingAnimationHooks(HMODULE executable) {
+    // Each signature covers complete instructions with no relative operands.
+    constexpr unsigned char bubble[] = {0x51, 0x53, 0x55, 0x56, 0x57};
+    constexpr unsigned char stage[] = {0x81, 0xEC, 0x84, 0x00, 0x00, 0x00};
+    constexpr unsigned char resize[] = {0x53, 0x8B, 0x5C, 0x24, 0x0C, 0x56, 0x57};
+    constexpr unsigned char animate[] = {0x53, 0x8B, 0x5C, 0x24, 0x0C, 0x56};
+    bool ok = InstallTrainingHook(executable, 0xD4CF0, bubble,
+        g_training_bubble_update, HookTrainingBubbleUpdate);
+    ok &= InstallTrainingHook(executable, 0xD2FA0, stage,
+        g_training_stage_update, HookTrainingStageUpdate);
+    ok &= InstallTrainingHook(executable, 0x118690, resize,
+        g_training_resize, HookTrainingResize);
+    ok &= InstallTrainingHook(executable, 0x118810, animate,
+        g_training_animate_size, HookTrainingAnimateSize);
+    return ok;
+}
+
 bool InstallCompanyAnimationHook(HMODULE executable) {
     if (g_company_animate_move) {
         return true;
@@ -6949,6 +7159,9 @@ bool InstallUnifiedUILayoutHook(UINT width, UINT height, int title_screen_mode) 
     g_unified_ui.title_screen_mode = title_screen_mode;
     g_unified_ui.trampoline = trampoline;
     g_unified_ui.installed = true;
+    if (!InstallTrainingAnimationHooks(executable)) {
+        Log("Some training animation corrections unavailable");
+    }
     if (!InstallCompanyAnimationHook(executable)) {
         Log("Company navigation animation correction unavailable");
     }
