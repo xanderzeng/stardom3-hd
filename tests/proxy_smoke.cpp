@@ -3,12 +3,39 @@
 
 #include <cstdio>
 #include <cwchar>
+#include <cstring>
 
 using Direct3DCreate9Fn = IDirect3D9* (WINAPI*)(UINT);
 
 int g_key_menu_messages = 0;
+int g_window_position_messages = 0;
+IDirect3DDevice9* g_nested_reset_device = nullptr;
+D3DPRESENT_PARAMETERS g_nested_reset_parameters{};
+HRESULT g_nested_reset_result = S_OK;
+int g_nested_reset_calls = 0;
+
+HRESULT STDMETHODCALLTYPE SimulateDeviceLost(IDirect3DDevice9*) {
+    return D3DERR_DEVICELOST;
+}
+
+bool ReplaceDeviceSlot(void** table, size_t index, void* replacement) {
+    DWORD protection = 0;
+    if (!VirtualProtect(table + index, sizeof(void*), PAGE_READWRITE, &protection)) return false;
+    table[index] = replacement;
+    DWORD ignored = 0;
+    return VirtualProtect(table + index, sizeof(void*), protection, &ignored) != FALSE;
+}
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_WINDOWPOSCHANGING) {
+        ++g_window_position_messages;
+        if (g_nested_reset_device) {
+            auto* device = g_nested_reset_device;
+            g_nested_reset_device = nullptr;
+            ++g_nested_reset_calls;
+            g_nested_reset_result = device->Reset(&g_nested_reset_parameters);
+        }
+    }
     if (message == WM_SYSCOMMAND &&
         (wparam & 0xFFF0u) == SC_KEYMENU) {
         ++g_key_menu_messages;
@@ -193,6 +220,28 @@ int wmain(int argc, wchar_t** argv) {
                 SUCCEEDED(device->BeginScene()) && SUCCEEDED(device->EndScene());
         };
         lifecycle_ok = verify();
+        // Model repeated power-off/lost-device responses without actually
+        // turning off the user's monitor. No window changes or parameter
+        // mutation are allowed, and the real device must remain usable.
+        auto* table = *reinterpret_cast<void***>(device);
+        void* original_cooperative = table[3];
+        if (ReplaceDeviceSlot(table, 3, reinterpret_cast<void*>(&SimulateDeviceLost))) {
+            const int positions_before = g_window_position_messages;
+            auto unavailable = parameters;
+            unavailable.Windowed = FALSE;
+            const auto before = unavailable;
+            for (int retry = 0; retry < 100; ++retry) {
+                const HRESULT lost = device->Reset(&unavailable);
+                lifecycle_ok = lifecycle_ok && lost == D3DERR_DEVICELOST &&
+                    std::memcmp(&before, &unavailable, sizeof(before)) == 0;
+            }
+            const bool restored = ReplaceDeviceSlot(table, 3, original_cooperative);
+            lifecycle_ok = restored && lifecycle_ok &&
+                positions_before == g_window_position_messages && verify();
+        } else {
+            lifecycle_ok = false;
+        }
+        std::printf("lost-device retry isolation: %s\n", lifecycle_ok ? "PASS" : "FAIL");
         for (int cycle = 0; cycle < 3 && lifecycle_ok; ++cycle) {
             D3DPRESENT_PARAMETERS reset{};
             reset.BackBufferWidth = 800;
@@ -214,9 +263,15 @@ int wmain(int argc, wchar_t** argv) {
                 if (held_backbuffer) held_backbuffer->Release();
                 lifecycle_ok = lifecycle_ok && FAILED(failed_reset);
             }
+            g_nested_reset_parameters = reset;
+            g_nested_reset_device = device;
+            const int nested_before = g_nested_reset_calls;
             const HRESULT reset_result = device->Reset(&reset);
+            g_nested_reset_device = nullptr;
             std::printf("reset %d=0x%08lX\n", cycle, static_cast<unsigned long>(reset_result));
-            lifecycle_ok = lifecycle_ok && SUCCEEDED(reset_result) && verify();
+            lifecycle_ok = lifecycle_ok && SUCCEEDED(reset_result) &&
+                g_nested_reset_calls == nested_before + 1 &&
+                g_nested_reset_result == D3DERR_DEVICELOST && verify();
             if (!lifecycle_ok) break;
             const ULONG remaining_refs = device->Release();
             std::printf("release refs=%lu\n", remaining_refs);

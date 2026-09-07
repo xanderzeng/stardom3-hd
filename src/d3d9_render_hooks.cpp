@@ -1905,6 +1905,7 @@ struct DeviceLifecycle {
     void** original = nullptr;
     Config config{};
     HWND window = nullptr;
+    bool reset_in_progress = false;
 };
 std::map<IDirect3DDevice9*, DeviceLifecycle> device_lifecycles;
 bool BindLifecycleTable(IDirect3DDevice9* device, DeviceLifecycle& lifecycle);
@@ -1939,14 +1940,29 @@ HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* device,
     if (found == device_lifecycles.end()) return OriginalDeviceMethod<ResetFn>(device, 16)(device, parameters);
     if (!parameters) return D3DERR_INVALIDCALL;
     auto& lifecycle = found->second;
+    // Reset and window resizing dispatch synchronous window messages. The game
+    // may request another Reset from those messages; never enter D3D recursively.
+    if (lifecycle.reset_in_progress) return D3DERR_DEVICELOST;
+    struct ResetScope {
+        bool& active;
+        explicit ResetScope(bool& value) : active(value) { active = true; }
+        ~ResetScope() { active = false; }
+    } reset_scope(lifecycle.reset_in_progress);
+    // Monitor power-off, locking and focus loss can leave an exclusive device
+    // unavailable. Do not resize its window or attempt another mode switch until
+    // the runtime says recovery is possible. S_OK still permits explicit resets.
+    const HRESULT cooperative = device->TestCooperativeLevel();
+    if (FAILED(cooperative) && cooperative != D3DERR_DEVICENOTRESET) {
+        return cooperative;
+    }
     auto patched = *parameters;
     NormalizePresentation(patched, lifecycle.config);
     const HWND window = patched.hDeviceWindow ? patched.hDeviceWindow : lifecycle.window;
     const auto& resolution = lifecycle.config.resolution;
-    ResizeClientArea(window,
-        patched.Windowed ? resolution.width : patched.BackBufferWidth,
-        patched.Windowed ? resolution.height : patched.BackBufferHeight,
-        lifecycle.config.borderless, !patched.Windowed);
+    // Reset clears the backbuffer dimensions in its in/out parameters. Keep the
+    // requested dimensions for the post-success window update.
+    const UINT window_width = patched.Windowed ? resolution.width : patched.BackBufferWidth;
+    const UINT window_height = patched.Windowed ? resolution.height : patched.BackBufferHeight;
     if (device == g_device_hook.device) {
         g_device_hook.main_target_surface = nullptr;
         g_device_hook.active_target_is_main = false;
@@ -1974,8 +1990,7 @@ HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* device,
             RefreshMainTarget(device);
         }
         ResizeClientArea(window,
-            patched.Windowed ? resolution.width : patched.BackBufferWidth,
-            patched.Windowed ? resolution.height : patched.BackBufferHeight,
+            window_width, window_height,
             lifecycle.config.borderless, !patched.Windowed);
     }
     if (IsDebugModeEnabled()) {
