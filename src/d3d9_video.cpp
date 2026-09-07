@@ -27,6 +27,8 @@ struct OpeningVideoState {
     HWND window = nullptr;
     std::uint32_t source_width = 0;
     std::uint32_t source_height = 0;
+    std::uint32_t display_width = 0;
+    std::uint32_t display_height = 0;
     ULONGLONG closed_tick = 0;
     bool attempted = false;
     bool installed = false;
@@ -88,10 +90,10 @@ void GetOpeningVideoPlacement(HWND window, std::uint32_t source_width,
     y = (output_height - static_cast<int>(height)) / 2;
 }
 
-void ApplyOpeningVideoPlacement() {
+int ApplyOpeningVideoPlacement() {
     if (!g_opening_video.buffer || !g_opening_video.original_set_scale ||
         !g_opening_video.original_set_offset) {
-        return;
+        return 0;
     }
     int x = 0;
     int y = 0;
@@ -100,11 +102,20 @@ void ApplyOpeningVideoPlacement() {
     GetOpeningVideoPlacement(
         g_opening_video.window, g_opening_video.source_width,
         g_opening_video.source_height, x, y, width, height);
-    g_opening_video.original_set_scale(g_opening_video.buffer, width, height);
+    const int scaled = g_opening_video.original_set_scale(
+        g_opening_video.buffer, width, height);
+    if (scaled) {
+        g_opening_video.display_width = width;
+        g_opening_video.display_height = height;
+    }
+    // A rejected scale leaves the previous buffer size in effect. Center that
+    // size rather than positioning a source-sized movie as if it had enlarged.
+    x += (static_cast<int>(width) -
+          static_cast<int>(g_opening_video.display_width)) / 2;
+    y += (static_cast<int>(height) -
+          static_cast<int>(g_opening_video.display_height)) / 2;
     g_opening_video.original_set_offset(g_opening_video.buffer, x, y);
-    Log("Opening video Bink buffer: source=%ux%u output=%ux%u offset=%d,%d",
-        g_opening_video.source_width, g_opening_video.source_height,
-        width, height, x, y);
+    return scaled;
 }
 
 void* WINAPI HookBinkOpen(const char* path, std::uint32_t flags) {
@@ -131,14 +142,32 @@ void WINAPI HookBinkClose(void* bink) {
 
 void* WINAPI HookBinkBufferOpen(HWND window, std::uint32_t width,
                                 std::uint32_t height, std::uint32_t flags) {
+    const bool opening_video = g_opening_video.bink && !g_opening_video.buffer;
+    const std::uint32_t original_flags = flags;
+    if (opening_video) {
+        // Bink's default DirectDraw primary surface cannot scale. Use a DIB
+        // section (type 2) with non-integer stretch/shrink on both axes.
+        constexpr std::uint32_t type_and_scale_mask = 0xff00001fu;
+        constexpr std::uint32_t scalable_dib = 0x55000002u;
+        flags = (flags & ~type_and_scale_mask) | scalable_dib;
+    }
     void* buffer = g_opening_video.original_buffer_open(
         window, width, height, flags);
-    if (buffer && g_opening_video.bink && !g_opening_video.buffer) {
+    if (!buffer && opening_video) {
+        buffer = g_opening_video.original_buffer_open(
+            window, width, height, original_flags);
+    }
+    if (buffer && opening_video) {
         g_opening_video.buffer = buffer;
         g_opening_video.window = window;
         g_opening_video.source_width = width;
         g_opening_video.source_height = height;
-        ApplyOpeningVideoPlacement();
+        g_opening_video.display_width = width;
+        g_opening_video.display_height = height;
+        const int scaled = ApplyOpeningVideoPlacement();
+        Log("Opening video Bink buffer: source=%ux%u output=%ux%u scale_ok=%d",
+            width, height, g_opening_video.display_width,
+            g_opening_video.display_height, scaled);
     }
     return buffer;
 }
@@ -163,6 +192,10 @@ int WINAPI HookBinkBufferSetOffset(void* buffer, int x, int y) {
     GetOpeningVideoPlacement(
         g_opening_video.window, g_opening_video.source_width,
         g_opening_video.source_height, centered_x, centered_y, width, height);
+    centered_x += (static_cast<int>(width) -
+                  static_cast<int>(g_opening_video.display_width)) / 2;
+    centered_y += (static_cast<int>(height) -
+                  static_cast<int>(g_opening_video.display_height)) / 2;
     return g_opening_video.original_set_offset(
         buffer, centered_x, centered_y);
 }
@@ -172,15 +205,7 @@ int WINAPI HookBinkBufferSetScale(void* buffer, std::uint32_t width,
     if (buffer != g_opening_video.buffer) {
         return g_opening_video.original_set_scale(buffer, width, height);
     }
-    int x = 0;
-    int y = 0;
-    std::uint32_t scaled_width = 0;
-    std::uint32_t scaled_height = 0;
-    GetOpeningVideoPlacement(
-        g_opening_video.window, g_opening_video.source_width,
-        g_opening_video.source_height, x, y, scaled_width, scaled_height);
-    return g_opening_video.original_set_scale(
-        buffer, scaled_width, scaled_height);
+    return ApplyOpeningVideoPlacement();
 }
 
 bool PatchImport(HMODULE module, const char* imported_dll,

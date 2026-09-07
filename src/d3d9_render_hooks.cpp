@@ -11,10 +11,21 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <array>
+#include <map>
 #include <string>
 #include <vector>
 
 namespace stardom {
+
+namespace {
+std::map<void**, std::array<void*, 119>> original_device_tables;
+template<class Fn> Fn OriginalDeviceMethod(IDirect3DDevice9* device, size_t slot) {
+    return reinterpret_cast<Fn>(original_device_tables.at(
+        *reinterpret_cast<void***>(device))[slot]);
+}
+}
+bool PatchVtableSlot(void** vtable, size_t index, void* replacement, void** original_out);
 
 bool CapturePhoneOverlayDebugFrame(IDirect3DDevice9* device) {
     IDirect3DSurface9* back_buffer = nullptr;
@@ -349,6 +360,7 @@ void UpdateScheduleDateHover(IDirect3DDevice9* device) {
 }
 
 HRESULT STDMETHODCALLTYPE HookBeginScene(IDirect3DDevice9* device) {
+    if (device != g_device_hook.device || !g_device_hook.original_begin_scene) return OriginalDeviceMethod<BeginSceneFn>(device, 41)(device);
     // Apply schedule hover visibility after the game's per-frame input update
     // and before it traverses the GUI tree to build draw calls.
     UpdateScheduleDateHover(device);
@@ -418,6 +430,7 @@ void RunFirstDrawMaintenance() {
 HRESULT STDMETHODCALLTYPE HookSetRenderTarget(IDirect3DDevice9* device,
                                                DWORD index,
                                                IDirect3DSurface9* surface) {
+    if (device != g_device_hook.device || !g_device_hook.original_set_render_target) return OriginalDeviceMethod<SetRenderTargetFn>(device, 37)(device, index, surface);
     if (device != g_device_hook.device ||
         !g_device_hook.original_set_render_target) {
         return D3DERR_INVALIDCALL;
@@ -442,6 +455,7 @@ HRESULT STDMETHODCALLTYPE HookSetRenderTarget(IDirect3DDevice9* device,
 }
 
 HRESULT STDMETHODCALLTYPE HookSetViewport(IDirect3DDevice9* device, const D3DVIEWPORT9* viewport) {
+    if (device != g_device_hook.device || !g_device_hook.original_set_viewport) return OriginalDeviceMethod<SetViewportFn>(device, 47)(device, viewport);
     if (device != g_device_hook.device || !g_device_hook.original_set_viewport || !viewport) {
         return D3DERR_INVALIDCALL;
     }
@@ -1697,6 +1711,7 @@ bool DrawNormalizedAwardsScreenPrimitive(IDirect3DDevice9* device,
 
 HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                              UINT start_vertex, UINT primitive_count) {
+    if (device != g_device_hook.device || !g_device_hook.original_draw_primitive) return OriginalDeviceMethod<DrawPrimitiveFn>(device, 81)(device, type, start_vertex, primitive_count);
     RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive) {
         if (g_device_hook.gui_runtime_probe &&
@@ -1750,6 +1765,7 @@ HRESULT STDMETHODCALLTYPE HookDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITI
 HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* source,
                                       const RECT* destination, HWND override_window,
                                       const RGNDATA* dirty_region) {
+    if (device != g_device_hook.device || !g_device_hook.original_present) return OriginalDeviceMethod<PresentFn>(device, 17)(device, source, destination, override_window, dirty_region);
     if (device == g_device_hook.device && g_device_hook.original_present) {
         if (IsDebugModeEnabled()) {
             static bool phone_dialogue_capture_attempted = false;
@@ -1788,6 +1804,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDirect3DDevice9* device, const RECT* sour
 HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                                     INT base_vertex, UINT min_vertex, UINT num_vertices,
                                                     UINT start_index, UINT primitive_count) {
+    if (device != g_device_hook.device || !g_device_hook.original_draw_indexed_primitive) return OriginalDeviceMethod<DrawIndexedPrimitiveFn>(device, 82)(device, type, base_vertex, min_vertex, num_vertices, start_index, primitive_count);
     RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_indexed_primitive) {
         if (g_device_hook.ui_draw_diagnostics) {
@@ -1812,6 +1829,7 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitive(IDirect3DDevice9* device, D3D
 
 HRESULT STDMETHODCALLTYPE HookDrawPrimitiveUP(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                                                UINT primitive_count, const void* vertices, UINT stride) {
+    if (device != g_device_hook.device || !g_device_hook.original_draw_primitive_up) return OriginalDeviceMethod<DrawPrimitiveUPFn>(device, 83)(device, type, primitive_count, vertices, stride);
     RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_primitive_up) {
         std::vector<unsigned char> normalized;
@@ -1857,6 +1875,7 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitiveUP(
     IDirect3DDevice9* device, D3DPRIMITIVETYPE type, UINT min_vertex, UINT num_vertices,
     UINT primitive_count, const void* indices, D3DFORMAT index_format,
     const void* vertices, UINT stride) {
+    if (device != g_device_hook.device || !g_device_hook.original_draw_indexed_primitive_up) return OriginalDeviceMethod<DrawIndexedPrimitiveUPFn>(device, 84)(device, type, min_vertex, num_vertices, primitive_count, indices, index_format, vertices, stride);
     RunFirstDrawMaintenance();
     if (device == g_device_hook.device && g_device_hook.original_draw_indexed_primitive_up) {
         if (g_device_hook.ui_draw_diagnostics) {
@@ -1879,7 +1898,139 @@ HRESULT STDMETHODCALLTYPE HookDrawIndexedPrimitiveUP(
     return D3DERR_INVALIDCALL;
 }
 
+namespace {
+using ResetFn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
+using ReleaseFn = ULONG (STDMETHODCALLTYPE*)(IDirect3DDevice9*);
+struct DeviceLifecycle {
+    void** original = nullptr;
+    Config config{};
+    HWND window = nullptr;
+};
+std::map<IDirect3DDevice9*, DeviceLifecycle> device_lifecycles;
+bool BindLifecycleTable(IDirect3DDevice9* device, DeviceLifecycle& lifecycle);
+
+void RefreshMainTarget(IDirect3DDevice9* device) {
+    g_device_hook.main_target_surface = nullptr;
+    g_device_hook.active_target_is_main = false;
+    g_device_hook.active_target_width = 0;
+    g_device_hook.active_target_height = 0;
+    IDirect3DSurface9* target = nullptr;
+    if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &target))) {
+        D3DSURFACE_DESC desc{};
+        if (SUCCEEDED(target->GetDesc(&desc))) {
+            g_device_hook.main_target_surface = target;
+            g_device_hook.active_target_width = desc.Width;
+            g_device_hook.active_target_height = desc.Height;
+            g_device_hook.active_target_is_main = true;
+        }
+        // Borrow identity only: retaining the implicit surface prevents Reset
+        // and can keep the device alive. Clear it before Reset/final Release.
+        target->Release();
+    }
+    g_device_hook.first_draw_maintenance_done = false;
+    g_device_hook.title_pillarbox_cleared = false;
+    g_device_hook.training_pillarbox_cleared = false;
+    g_device_hook.loading_background_cleared = false;
+}
+
+HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* device,
+                                     D3DPRESENT_PARAMETERS* parameters) {
+    const auto found = device_lifecycles.find(device);
+    if (found == device_lifecycles.end()) return OriginalDeviceMethod<ResetFn>(device, 16)(device, parameters);
+    if (!parameters) return D3DERR_INVALIDCALL;
+    auto& lifecycle = found->second;
+    auto patched = *parameters;
+    NormalizePresentation(patched, lifecycle.config);
+    const HWND window = patched.hDeviceWindow ? patched.hDeviceWindow : lifecycle.window;
+    const auto& resolution = lifecycle.config.resolution;
+    ResizeClientArea(window,
+        patched.Windowed ? resolution.width : patched.BackBufferWidth,
+        patched.Windowed ? resolution.height : patched.BackBufferHeight,
+        lifecycle.config.borderless, !patched.Windowed);
+    if (device == g_device_hook.device) {
+        g_device_hook.main_target_surface = nullptr;
+        g_device_hook.active_target_is_main = false;
+        g_device_hook.active_target_width = 0;
+        g_device_hook.active_target_height = 0;
+    }
+    const HRESULT result = reinterpret_cast<ResetFn>(lifecycle.original[16])(device, &patched);
+    // The runtime can switch to a different vtable on both failed and successful
+    // Reset. In particular, the lost-device table must intercept the next retry.
+    if (!BindLifecycleTable(device, lifecycle)) Log("Failed to rebind lifecycle hooks after Reset");
+    if (SUCCEEDED(result)) {
+        *parameters = patched;
+        SyncEngineDisplayMode(lifecycle.config);
+        lifecycle.window = window;
+        if (device == g_device_hook.device) {
+            const auto& config = lifecycle.config;
+            if (config.native_render && config.ui_scale_mode != 0) {
+                InstallUIViewportHook(device, resolution.width, resolution.height, config.ui_scale_mode);
+            }
+            if (config.native_render && g_device_hook.original_begin_scene) {
+                InstallUIDrawHooks(device, config.ui_draw_diagnostics,
+                    config.suppress_transparent_ui, config.ui_container_probe,
+                    config.suppress_proxy_containers, config.gui_runtime_probe);
+            }
+            RefreshMainTarget(device);
+        }
+        ResizeClientArea(window,
+            patched.Windowed ? resolution.width : patched.BackBufferWidth,
+            patched.Windowed ? resolution.height : patched.BackBufferHeight,
+            lifecycle.config.borderless, !patched.Windowed);
+    }
+    if (IsDebugModeEnabled()) {
+        Log("Reset: device=%p result=0x%08lX output=%dx%d", device,
+            static_cast<unsigned long>(result), resolution.width, resolution.height);
+    }
+    return result;
+}
+
+ULONG STDMETHODCALLTYPE HookDeviceRelease(IDirect3DDevice9* device) {
+    const auto found = device_lifecycles.find(device);
+    if (found == device_lifecycles.end()) return OriginalDeviceMethod<ReleaseFn>(device, 2)(device);
+    const auto original = reinterpret_cast<ReleaseFn>(found->second.original[2]);
+    const ULONG refs = original(device);
+    if (!refs) {
+        if (g_device_hook.device == device) g_device_hook = DeviceHookState{};
+        device_lifecycles.erase(device);
+    }
+    return refs;
+}
+
+bool BindLifecycleTable(IDirect3DDevice9* device, DeviceLifecycle& lifecycle) {
+    auto* table = *reinterpret_cast<void***>(device);
+    auto inserted = original_device_tables.try_emplace(table);
+    if (inserted.second) std::copy_n(table, inserted.first->second.size(), inserted.first->second.begin());
+    lifecycle.original = inserted.first->second.data();
+    void* ignored = nullptr;
+    return PatchVtableSlot(table, 2, reinterpret_cast<void*>(&HookDeviceRelease), &ignored) &&
+        PatchVtableSlot(table, 16, reinterpret_cast<void*>(&HookReset), &ignored);
+}
+}  // namespace
+
+bool InstallDeviceLifecycleHooks(IDirect3DDevice9* device, const Config& config, HWND window) {
+    if (!device) return false;
+    if (device_lifecycles.find(device) != device_lifecycles.end()) return true;
+    // Rendering adaptation follows the newest game device; other devices pass
+    // through to the originals even when D3D9 shares their vtable.
+    g_device_hook = DeviceHookState{};
+    auto& lifecycle = device_lifecycles[device];
+    lifecycle.config = config;
+    lifecycle.window = window;
+    // Preserve private runtime slots beyond IDirect3DDevice9's public methods.
+    // D3D9 uses those slots internally, including during final Release.
+    if (!BindLifecycleTable(device, lifecycle)) return false;
+    g_device_hook.device = device;
+    g_device_hook.width = config.resolution.width;
+    g_device_hook.height = config.resolution.height;
+    return true;
+}
+
 bool PatchVtableSlot(void** vtable, size_t index, void* replacement, void** original_out) {
+    if (vtable[index] == replacement) {
+        *original_out = original_device_tables.at(vtable)[index];
+        return true;
+    }
     DWORD old_protection = 0;
     if (!VirtualProtect(&vtable[index], sizeof(void*), PAGE_READWRITE, &old_protection)) {
         return false;
@@ -1893,7 +2044,7 @@ bool PatchVtableSlot(void** vtable, size_t index, void* replacement, void** orig
 }
 
 bool InstallUIViewportHook(IDirect3DDevice9* device, UINT width, UINT height, int ui_scale_mode) {
-    if (!device || g_device_hook.device) {
+    if (!device || (g_device_hook.device && g_device_hook.device != device)) {
         return false;
     }
 
@@ -1904,13 +2055,7 @@ bool InstallUIViewportHook(IDirect3DDevice9* device, UINT width, UINT height, in
     g_device_hook.height = height;
     g_device_hook.active_target_width = width;
     g_device_hook.active_target_height = height;
-    IDirect3DSurface9* main_target = nullptr;
-    if (SUCCEEDED(device->GetRenderTarget(0, &main_target)) && main_target) {
-        g_device_hook.main_target_surface = main_target;
-        g_device_hook.active_target_is_main = true;
-    } else {
-        g_device_hook.active_target_is_main = false;
-    }
+    RefreshMainTarget(device);
     g_device_hook.ui_scale_mode = ui_scale_mode;
     const bool target_ok = PatchVtableSlot(
         original, 37, reinterpret_cast<void*>(&HookSetRenderTarget),

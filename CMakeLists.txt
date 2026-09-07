@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.20)
 project(Stardom3Widescreen LANGUAGES CXX)
 
 enable_testing()
+add_executable(engine_display_mode_tests tests/engine_display_mode_tests.cpp)
+target_compile_features(engine_display_mode_tests PRIVATE cxx_std_17)
+target_include_directories(engine_display_mode_tests PRIVATE src)
+set_property(TARGET engine_display_mode_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME engine_display_mode COMMAND engine_display_mode_tests)
+
+add_executable(gui_move_bounds_tests tests/gui_move_bounds_tests.cpp)
+target_compile_features(gui_move_bounds_tests PRIVATE cxx_std_17)
+target_include_directories(gui_move_bounds_tests PRIVATE src)
+set_property(TARGET gui_move_bounds_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME gui_move_bounds COMMAND gui_move_bounds_tests)
 
 add_executable(training_animation_tests tests/training_animation_tests.cpp)
 target_compile_features(training_animation_tests PRIVATE cxx_std_17)
@@ -141,3 +152,9 @@ add_test(NAME proxy_partial_resolution
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 - -1 -1)
 add_test(NAME proxy_malformed_resolution
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> invalid 1080 -1 -1)
+add_test(NAME proxy_lifecycle_native
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080 0 1)
+add_test(NAME proxy_lifecycle_compatibility
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1280 720 1280 720 1 0)
+set_tests_properties(proxy_lifecycle_native proxy_lifecycle_compatibility
+    PROPERTIES SKIP_RETURN_CODE 77)
