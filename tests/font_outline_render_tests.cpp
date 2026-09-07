@@ -55,6 +55,21 @@ void TestStandaloneScopes() {
     GuiField<int>(card,GuiObjectField::height)=500;
     stardom_font::Memo(label,nullptr,nullptr,0,0);
     Check(!g_inventory_contrast && !g_light_text_contrast,"standalone page state restored");
+    GuiField<int>(label,GuiObjectField::width)=406;
+    GuiField<int>(label,GuiObjectField::height)=112;
+    GuiField<int>(label,0x13C)=20;
+    GuiField<int>(label,0x144)=5;
+    GuiField<int>(label,0x120)=2;
+    GuiField<int>(label,0x124)=405;
+    GuiField<int>(label,0x128)=110;
+    expected_contrast=true;
+    stardom_font::Memo(label,nullptr,nullptr,0,0);
+    GuiField<int>(label,0x144)=8;
+    stardom_font::Memo(label,nullptr,nullptr,0,0);
+    expected_contrast=false;
+    GuiField<int>(label,0x124)=404;
+    stardom_font::Memo(label,nullptr,nullptr,0,0);
+    Check(!g_brighten_text,"dialogue brightening scope restored");
     stardom_font::label_draw=nullptr;stardom_font::memo_draw=nullptr;
 }
 #endif
@@ -70,6 +85,12 @@ DWORD __fastcall ObserveContrast(void* self, void*, DWORD, DWORD, DWORD,
     Check((flags & 0x200) && stardom::g_glyph, "inventory enables five-pass union");
     Check(p[0x78] == 0x30 && p[0x79] == 0x34 && p[0x7A] == 0x28 &&
           p[0x7B] == 128, "dark outline preserves source opacity");
+    if (stardom::g_brighten_text) {
+        for (unsigned i=0;i<4;++i)
+            Check(p[0x58+i*4]==255 && p[0x59+i*4]==255 &&
+                  p[0x5A+i*4]==255 && p[0x5B+i*4]==128,
+                  "dialogue brightens foreground without changing opacity");
+    }
     return 17;
 }
 
@@ -154,6 +175,16 @@ void TestNativeBridge() {
         Check(std::memcmp(before, font, sizeof(font)) == 0,
               "small-font glyph restores shared palette");
     }
+    const DWORD dialogue_cell=20, dialogue_body=0x80D3D1CA;
+    std::memcpy(font+8,&dialogue_cell,4);
+    for(unsigned i=0;i<4;++i) std::memcpy(font+0x58+i*4,&dialogue_body,4);
+    std::memcpy(before,font,sizeof(font));
+    {
+        InventoryTextContrast dialogue(true,true,true);
+        Check(HookGlyphDraw(font,nullptr,1,2,3,4,0,6)==17,"plain dialogue adds outline");
+        Check(std::memcmp(before,font,sizeof(font))==0,"dialogue restores body and border palettes");
+    }
+    Check(!g_brighten_text,"dialogue cannot brighten later glyphs");
     g_original = nullptr;
 }
 

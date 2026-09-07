@@ -12,13 +12,15 @@ void UninstallFontOutlineHook(HMODULE executable);
 // Restricts added contrast to the inventory description currently rendering.
 class InventoryTextContrast {
 public:
-    explicit InventoryTextContrast(bool enabled, bool light_text = false);
+    explicit InventoryTextContrast(bool enabled, bool light_text = false,
+                                   bool brighten = false);
     ~InventoryTextContrast();
     InventoryTextContrast(const InventoryTextContrast&) = delete;
     InventoryTextContrast& operator=(const InventoryTextContrast&) = delete;
 private:
     bool saved_;
     bool saved_light_;
+    bool saved_brighten_;
 };
 
 // Restores every modified D3D state on destruction, before returning to the game.

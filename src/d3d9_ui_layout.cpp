@@ -5,6 +5,7 @@
 #include "ui_page_geometry.h"
 #include "ui_dispatch.h"
 #include "font_outline.h"
+#include "font_dialogue.h"
 #include "training_animation.h"
 
 #include <intrin.h>
@@ -2982,6 +2983,7 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
 void __fastcall HookCompanyListDraw(void* self, void*, void* renderer,
                                     uint32_t time, uint32_t flags) {
     GuiObjectReadBatch read_batch;
+    InventoryTextContrast dialogue(IsDialogueMemo(self), true, true);
     if (!IsAspectFittedTextObject(self) ||
         !CanReadGuiObject(static_cast<unsigned char*>(self) + 0x50)) {
         g_company_list_draw(self, renderer, time, flags);

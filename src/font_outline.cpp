@@ -29,6 +29,7 @@ struct GlyphDraw {
 thread_local GlyphDraw* g_glyph = nullptr;
 thread_local bool g_inventory_contrast = false;
 thread_local bool g_light_text_contrast = false;
+thread_local bool g_brighten_text = false;
 using NativeGlyphDraw = DWORD (__thiscall*)(void*, DWORD, DWORD, DWORD,
                                           DWORD, DWORD, DWORD);
 NativeGlyphDraw g_original = nullptr;
@@ -51,13 +52,20 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
                     colors[0x5A + i * 4] == 0xD8);
     }
     unsigned char saved_outline[16];
+    unsigned char saved_body[16];
     if (contrast) {
         std::memcpy(saved_outline, colors + 0x78, 16);
+        std::memcpy(saved_body, colors + 0x58, 16);
         for (unsigned i = 0; i < 4; ++i) {
             colors[0x78 + i * 4] = 0x30;
             colors[0x79 + i * 4] = 0x34;
             colors[0x7A + i * 4] = 0x28;
             colors[0x7B + i * 4] = colors[0x5B + i * 4];
+            if (g_brighten_text) {
+                colors[0x58 + i * 4] = 255;
+                colors[0x59 + i * 4] = 255;
+                colors[0x5A + i * 4] = 255;
+            }
         }
         flags |= 0x200;
     }
@@ -113,7 +121,10 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
             }
         }
     }
-    if (contrast) std::memcpy(colors + 0x78, saved_outline, 16);
+    if (contrast) {
+        std::memcpy(colors + 0x78, saved_outline, 16);
+        std::memcpy(colors + 0x58, saved_body, 16);
+    }
     return result;
 }
 
@@ -222,14 +233,17 @@ IDirect3DPixelShader9* Shader(IDirect3DDevice9* d, IDirect3DBaseTexture9* t) {
 
 } // namespace
 
-InventoryTextContrast::InventoryTextContrast(bool enabled, bool light_text)
-    : saved_(g_inventory_contrast), saved_light_(g_light_text_contrast) {
+InventoryTextContrast::InventoryTextContrast(bool enabled, bool light_text, bool brighten)
+    : saved_(g_inventory_contrast), saved_light_(g_light_text_contrast),
+      saved_brighten_(g_brighten_text) {
     g_inventory_contrast = enabled;
     g_light_text_contrast = light_text;
+    g_brighten_text = brighten;
 }
 InventoryTextContrast::~InventoryTextContrast() {
     g_inventory_contrast = saved_;
     g_light_text_contrast = saved_light_;
+    g_brighten_text = saved_brighten_;
 }
 
 FontOutlineDraw::FontOutlineDraw(IDirect3DDevice9* d, UINT count)
