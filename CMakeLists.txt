@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.20)
 project(Stardom3Widescreen LANGUAGES CXX)
 
 enable_testing()
+add_executable(font_scale_patch_tests tests/font_scale_patch_tests.cpp)
+target_compile_features(font_scale_patch_tests PRIVATE cxx_std_17)
+target_compile_definitions(font_scale_patch_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET font_scale_patch_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME font_scale_patch COMMAND font_scale_patch_tests)
 add_executable(engine_display_mode_tests tests/engine_display_mode_tests.cpp)
 target_compile_features(engine_display_mode_tests PRIVATE cxx_std_17)
 target_include_directories(engine_display_mode_tests PRIVATE src)
@@ -41,6 +46,7 @@ add_library(d3d9 SHARED
     src/render_diagnostics.h
     src/d3d9_video.cpp
     src/d3d9_font.cpp
+    src/font_scale_patch.cpp
     src/font_outline.cpp
     src/d3d9_proxy_internal.h
     src/ui_layout_state.h

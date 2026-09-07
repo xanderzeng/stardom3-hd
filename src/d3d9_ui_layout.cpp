@@ -6,6 +6,7 @@
 #include "ui_dispatch.h"
 #include "font_outline.h"
 #include "font_dialogue.h"
+#include "font_scale_patch.h"
 #include "training_animation.h"
 
 #include <intrin.h>
@@ -2939,6 +2940,7 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
         GuiField<unsigned char>(self, 0x14C) = 0;
     }
     const auto fitted = FitPageTextMetrics(font, saved[1], viewport.height);
+    FittedLabelFontScope label_font(fitted.font_size);
     GuiField<int>(self, 0x130) = fitted.font_size;
     GuiField<int>(self, 0x140) = fitted.line_gap;
     // Use the game's own measurement with the fitted bounds/font so centred,
@@ -7041,6 +7043,10 @@ bool InstallCompanyListDrawHook(HMODULE executable) {
 bool InstallFittedTextDrawHook(HMODULE executable) {
     if (g_fitted_text_draw) {
         return true;
+    }
+    if (!InstallFractionalFontScalePatch(executable)) {
+        Log("Aspect-fit text scaling unavailable");
+        return false;
     }
     auto* target = reinterpret_cast<unsigned char*>(executable) + 0x130310;
     auto* measure = reinterpret_cast<unsigned char*>(executable) + 0x130710;
