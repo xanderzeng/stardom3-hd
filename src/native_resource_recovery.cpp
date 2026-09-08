@@ -95,6 +95,42 @@ struct EntryHook {
     }
 };
 EntryHook create_hook, destroy_hook, invalidate_hook;
+
+// RenderWare can reach these texture consumers with a null raster after a
+// failed Reset, even when its cached client dimensions still match. Clear must
+// fail for this frame; camera begin must reach its existing cooperative-level
+// recovery block, otherwise skipping the frame would prevent all future resets.
+EntryHook clear_guard, camera_guard;
+bool InstallRasterGuard(EntryHook& hook, unsigned char* entry,
+                        const unsigned char* expected, bool camera,
+                        unsigned char* unavailable, uint32_t device_slot = 0xA194D8) {
+    auto* bridge = static_cast<unsigned char*>(VirtualAlloc(nullptr, 32,
+        MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!bridge) return false;
+    size_t n = 0;
+    bridge[n++] = 0x83;
+    bridge[n++] = camera ? 0x7D : 0x3B; // cmp dword ptr [ebp/ebx], 0
+    if (camera) bridge[n++] = 0;
+    bridge[n++] = 0;
+    bridge[n++] = 0x75; bridge[n++] = camera ? 10 : 5;
+    if (camera) {
+        bridge[n++] = 0xA1; // recovery expects EAX = the engine device
+        std::memcpy(bridge+n, &device_slot, 4); n += 4;
+    }
+    bridge[n++] = 0xE9;
+    const auto displacement = static_cast<int32_t>(reinterpret_cast<uintptr_t>(unavailable) -
+        reinterpret_cast<uintptr_t>(bridge+n+4));
+    std::memcpy(bridge+n, &displacement, 4); n += 4;
+    std::memcpy(bridge+n, expected, 5); n += 5;
+    bridge[n++] = 0xE9;
+    const auto resume = static_cast<int32_t>(reinterpret_cast<uintptr_t>(entry+5) -
+        reinterpret_cast<uintptr_t>(bridge+n+4));
+    std::memcpy(bridge+n, &resume, 4); n += 4;
+    FlushInstructionCache(GetCurrentProcess(), bridge, n);
+    if (hook.Install(entry, expected, 5, bridge)) return true;
+    VirtualFree(bridge, 0, MEM_RELEASE);
+    return false;
+}
 }
 
 bool InstallNativeResourceRecovery(HMODULE executable) {
@@ -114,14 +150,29 @@ bool InstallNativeResourceRecovery(HMODULE executable) {
     constexpr unsigned char invalidate[] = {0x56,0x8B,0xF1,0x8B,0x46,0x18};
     constexpr unsigned char lost[] = {0x53,0x8B,0xD9,0x56,0x57,0x8D,0x7B,0x18};
     constexpr unsigned char reset[] = {0x83,0xEC,0x18,0x33,0xC0,0x55,0x8B,0xE9};
+    constexpr unsigned char clear_raster[] = {0x8A,0x43,0x09,0xA8,0x0F};
+    constexpr unsigned char camera_raster[] = {0x8A,0x45,0x09,0xA8,0x0F};
+    constexpr unsigned char clear_failure[] = {0x5F,0x5E,0x5D,0x33,0xC0,0x5B,0x83,0xC4,0x68,0xC3};
+    constexpr unsigned char camera_recovery[] = {0xA1,0xD8,0x94,0xA1,0x00,0x83,0xC4,0x10};
     if (std::memcmp(base+0x1C3710,make,sizeof(make)) ||
         std::memcmp(base+0x1C2930,drop,sizeof(drop)) ||
         std::memcmp(base+0x1C2990,invalidate,sizeof(invalidate)) ||
         std::memcmp(base+0x1C3080,lost,sizeof(lost)) ||
-        std::memcmp(base+0x1C3180,reset,sizeof(reset))) return false;
+        std::memcmp(base+0x1C3180,reset,sizeof(reset)) ||
+        std::memcmp(base+0x290F72,clear_raster,sizeof(clear_raster)) ||
+        std::memcmp(base+0x292357,camera_raster,sizeof(camera_raster)) ||
+        std::memcmp(base+0x291281,clear_failure,sizeof(clear_failure)) ||
+        std::memcmp(base+0x292559,camera_recovery,sizeof(camera_recovery))) return false;
+    // Enter after the caller-cleanup instruction at 0069255E: this guard has
+    // not pushed the four render-state arguments that the normal path removes.
+    constexpr unsigned char recovery_device[] = {0x8B,0x10,0x50,0xFF,0x52,0x0C};
+    if (std::memcmp(base+0x292561,recovery_device,sizeof(recovery_device))) return false;
     if (!destroy_hook.Install(base+0x1C2930,drop,sizeof(drop),reinterpret_cast<void*>(&DestroyTarget)) ||
         !invalidate_hook.Install(base+0x1C2990,invalidate,sizeof(invalidate),reinterpret_cast<void*>(&InvalidateTarget)) ||
-        !create_hook.Install(base+0x1C3710,make,sizeof(make),reinterpret_cast<void*>(&CreateTarget))) {
+        !create_hook.Install(base+0x1C3710,make,sizeof(make),reinterpret_cast<void*>(&CreateTarget)) ||
+        !InstallRasterGuard(clear_guard, base+0x290F72, clear_raster, false, base+0x291281) ||
+        !InstallRasterGuard(camera_guard, base+0x292357, camera_raster, true, base+0x292561)) {
+        camera_guard.Rollback(); clear_guard.Rollback();
         create_hook.Rollback(); invalidate_hook.Rollback(); destroy_hook.Rollback();
         return false;
     }

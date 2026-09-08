@@ -62,7 +62,8 @@ LONG CALLBACK CaptureKnownCrash(EXCEPTION_POINTERS* exception) {
     const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const auto address = reinterpret_cast<uintptr_t>(exception->ExceptionRecord->ExceptionAddress);
     // Capture only the observed game fault, not handled first-chance AVs.
-    if (address != base + 0x290FA2 || InterlockedCompareExchange(&captured, 1, 0))
+    if ((address != base + 0x290FA2 && address != base + 0x292383) ||
+        InterlockedCompareExchange(&captured, 1, 0))
         return EXCEPTION_CONTINUE_SEARCH;
     HANDLE file = CreateFileW(dump_path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
         CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);

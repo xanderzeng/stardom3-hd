@@ -6,7 +6,48 @@ using namespace stardom;
 void Check(bool value, const char* message) {
     if (!value) { std::fprintf(stderr,"FAIL: %s\n",message); std::exit(1); }
 }
+__declspec(naked) unsigned RunRasterGuard(void* entry, void* raster) {
+    __asm {
+        push ebx
+        push ebp
+        mov eax, [esp+12]
+        mov ebx, [esp+16]
+        mov ebp, ebx
+        call eax
+        pop ebp
+        pop ebx
+        ret
+    }
+}
+void TestRasterGuards() {
+    for (bool camera : {false, true}) {
+        auto* code = static_cast<unsigned char*>(VirtualAlloc(nullptr, 64,
+            MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        Check(code != nullptr, "allocate raster guard fixture");
+        const unsigned char original[] = {0x8A, static_cast<unsigned char>(camera ? 0x45 : 0x43),0x09,0xA8,0x0F};
+        std::memcpy(code, original, 5);
+        const unsigned char ready[] = {0xB8,1,0,0,0,0xC3};
+        std::memcpy(code+5, ready, sizeof(ready));
+        const unsigned char unavailable[] = {0xB8,2,0,0,0,0xC3};
+        std::memcpy(code+32, unavailable, sizeof(unavailable));
+        if (camera) code[32] = 0xC3; // return EAX: device passed to recovery
+        uint32_t device = 0x12345678;
+        EntryHook hook;
+        Check(InstallRasterGuard(hook, code, original, camera, code+32,
+            reinterpret_cast<uint32_t>(&device)), "install actual x86 raster bridge");
+        uint32_t raster[3]{};
+        Check(RunRasterGuard(code, raster) == (camera ? device : 2),
+            "lost raster skips dereference; camera reaches device recovery");
+        Check(RunRasterGuard(code, raster) == (camera ? device : 2),
+            "repeated failure retains recovery path and balanced stack");
+        raster[0] = 0x1;
+        Check(RunRasterGuard(code, raster) == 1, "restored raster resumes original path");
+        hook.Rollback();
+        VirtualFree(code, 0, MEM_RELEASE);
+    }
+}
 int main() {
+    TestRasterGuards();
     Check(!InstallNativeResourceRecovery(GetModuleHandleW(nullptr)), "reject non-game binary");
     wchar_t path[MAX_PATH]{};
     GetSystemDirectoryW(path, MAX_PATH); wcscat_s(path,L"\\d3d9.dll");
