@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.20)
 project(Stardom3Widescreen LANGUAGES CXX)
 
 enable_testing()
+add_executable(native_resource_recovery_tests tests/native_resource_recovery_tests.cpp)
+target_compile_features(native_resource_recovery_tests PRIVATE cxx_std_17)
+target_compile_definitions(native_resource_recovery_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(native_resource_recovery_tests PRIVATE user32)
+set_property(TARGET native_resource_recovery_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME native_resource_recovery COMMAND native_resource_recovery_tests)
+add_executable(crash_diagnostics_tests tests/crash_diagnostics_tests.cpp)
+target_compile_features(crash_diagnostics_tests PRIVATE cxx_std_17)
+target_compile_definitions(crash_diagnostics_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET crash_diagnostics_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME crash_diagnostics COMMAND crash_diagnostics_tests)
 add_executable(font_scale_patch_tests tests/font_scale_patch_tests.cpp)
 target_compile_features(font_scale_patch_tests PRIVATE cxx_std_17)
 target_compile_definitions(font_scale_patch_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -28,6 +39,8 @@ add_test(NAME training_animation COMMAND training_animation_tests)
 
 add_library(d3d9 SHARED
     src/d3d9_proxy.cpp
+    src/crash_diagnostics.cpp
+    src/native_resource_recovery.cpp
     src/display_config.cpp
     src/proxy_config.cpp
     src/proxy_config.h

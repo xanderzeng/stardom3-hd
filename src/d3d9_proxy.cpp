@@ -15,6 +15,8 @@
 #include "d3d9_proxy_internal.h"
 #include "font_outline.h"
 #include "engine_display_mode.h"
+#include "crash_diagnostics.h"
+#include "native_resource_recovery.h"
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
@@ -329,6 +331,8 @@ public:
 
         const Config config = LoadConfig(IniPath());
         g_debug_mode = config.debug_mode;
+        ConfigureCrashDiagnostics(config.debug_mode, g_module_dir.c_str());
+        ConfigureRuntimeErrorDiagnostics(config.debug_mode, g_system_d3d9);
         if (!config.enabled) {
             Log("Patch disabled; forwarding CreateDevice unchanged");
             return real_->CreateDevice(adapter, type, focus_window, flags, parameters, device);
@@ -368,6 +372,7 @@ public:
 
         const HRESULT result = real_->CreateDevice(adapter, type, focus_window, flags, &patched, device);
         if (SUCCEEDED(result)) {
+            InstallNativeResourceRecovery(GetModuleHandleW(nullptr));
             SyncEngineDisplayMode(config);
             if (device && *device &&
                 !InstallDeviceLifecycleHooks(*device, config, target_window)) {
@@ -436,6 +441,7 @@ extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version, IDirect3D9Ex** d3d
 }
 
 extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_DETACH) stardom::RemoveCrashDiagnostics();
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
         stardom::g_module_dir = stardom::ModuleDirectory();

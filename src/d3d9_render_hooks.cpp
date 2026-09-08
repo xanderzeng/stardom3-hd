@@ -3,6 +3,7 @@
 #include "render_diagnostics.h"
 #include "render_hook_state.h"
 #include "font_outline.h"
+#include "native_resource_recovery.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -15,6 +16,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <intrin.h>
 
 namespace stardom {
 
@@ -1910,6 +1912,35 @@ struct DeviceLifecycle {
 std::map<IDirect3DDevice9*, DeviceLifecycle> device_lifecycles;
 bool BindLifecycleTable(IDirect3DDevice9* device, DeviceLifecycle& lifecycle);
 
+void TraceResetRequest(IDirect3DDevice9* device, const D3DPRESENT_PARAMETERS& p,
+                       HWND fallback, bool nested) {
+    // The entire probe, including counters, API queries and stack walk, is debug-only.
+    if (!IsDebugModeEnabled()) return;
+    static unsigned requests = 0;
+    if (++requests > 64) return;
+    const HWND window = p.hDeviceWindow ? p.hDeviceWindow : fallback;
+    RECT client{};
+    GetClientRect(window, &client);
+    D3DDEVICE_CREATION_PARAMETERS creation{};
+    const HRESULT queried = device->GetCreationParameters(&creation);
+    DEVMODEW desktop{};
+    desktop.dmSize = sizeof(desktop);
+    const BOOL display_ok = EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &desktop);
+    Log("Reset request #%u tick=%llu device=%p thread=%lu windowThread=%lu nested=%d foreground=%p window=%p iconic=%d client=%ldx%ld desktop=%lux%lu displayOK=%d creation=0x%08lX focus=%p flags=0x%lX",
+        requests, GetTickCount64(), device, GetCurrentThreadId(),
+        GetWindowThreadProcessId(window, nullptr), nested, GetForegroundWindow(), window,
+        IsIconic(window), client.right, client.bottom, desktop.dmPelsWidth, desktop.dmPelsHeight,
+        display_ok, static_cast<unsigned long>(queried), creation.hFocusWindow, creation.BehaviorFlags);
+    Log("Reset input: windowed=%d bb=%ux%u count=%u format=%u swap=%u ms=%u quality=%lu depth=%d depthFormat=%u flags=%lu refresh=%u interval=%u",
+        p.Windowed, p.BackBufferWidth, p.BackBufferHeight, p.BackBufferCount,
+        p.BackBufferFormat, p.SwapEffect, p.MultiSampleType, p.MultiSampleQuality,
+        p.EnableAutoDepthStencil, p.AutoDepthStencilFormat, p.Flags,
+        p.FullScreen_RefreshRateInHz, p.PresentationInterval);
+    void* frames[12]{};
+    const USHORT count = CaptureStackBackTrace(1, 12, frames, nullptr);
+    for (USHORT i = 0; i < count; ++i) Log("Reset stack #%u [%u]=%p", requests, i, frames[i]);
+}
+
 void RefreshMainTarget(IDirect3DDevice9* device) {
     g_device_hook.main_target_surface = nullptr;
     g_device_hook.active_target_is_main = false;
@@ -1940,6 +1971,7 @@ HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* device,
     if (found == device_lifecycles.end()) return OriginalDeviceMethod<ResetFn>(device, 16)(device, parameters);
     if (!parameters) return D3DERR_INVALIDCALL;
     auto& lifecycle = found->second;
+    TraceResetRequest(device, *parameters, lifecycle.window, lifecycle.reset_in_progress);
     // Reset and window resizing dispatch synchronous window messages. The game
     // may request another Reset from those messages; never enter D3D recursively.
     if (lifecycle.reset_in_progress) return D3DERR_DEVICELOST;
@@ -1952,11 +1984,18 @@ HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* device,
     // unavailable. Do not resize its window or attempt another mode switch until
     // the runtime says recovery is possible. S_OK still permits explicit resets.
     const HRESULT cooperative = device->TestCooperativeLevel();
+    if (IsDebugModeEnabled()) {
+        static unsigned checks = 0;
+        if (++checks <= 64) Log("Reset cooperative=0x%08lX", static_cast<unsigned long>(cooperative));
+    }
     if (FAILED(cooperative) && cooperative != D3DERR_DEVICENOTRESET) {
         return cooperative;
     }
     auto patched = *parameters;
     NormalizePresentation(patched, lifecycle.config);
+    if (IsDebugModeEnabled()) Log("Reset normalized: windowed=%d bb=%ux%u format=%u swap=%u refresh=%u",
+        patched.Windowed, patched.BackBufferWidth, patched.BackBufferHeight,
+        patched.BackBufferFormat, patched.SwapEffect, patched.FullScreen_RefreshRateInHz);
     const HWND window = patched.hDeviceWindow ? patched.hDeviceWindow : lifecycle.window;
     const auto& resolution = lifecycle.config.resolution;
     // Reset clears the backbuffer dimensions in its in/out parameters. Keep the
@@ -1969,11 +2008,13 @@ HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* device,
         g_device_hook.active_target_width = 0;
         g_device_hook.active_target_height = 0;
     }
+    ReleaseNativeResourcesForReset(device);
     const HRESULT result = reinterpret_cast<ResetFn>(lifecycle.original[16])(device, &patched);
     // The runtime can switch to a different vtable on both failed and successful
     // Reset. In particular, the lost-device table must intercept the next retry.
     if (!BindLifecycleTable(device, lifecycle)) Log("Failed to rebind lifecycle hooks after Reset");
     if (SUCCEEDED(result)) {
+        RestoreNativeResourcesAfterReset(device);
         *parameters = patched;
         SyncEngineDisplayMode(lifecycle.config);
         lifecycle.window = window;
@@ -2012,12 +2053,48 @@ ULONG STDMETHODCALLTYPE HookDeviceRelease(IDirect3DDevice9* device) {
     return refs;
 }
 
+HRESULT STDMETHODCALLTYPE TraceCreateRenderTarget(IDirect3DDevice9* device,
+    UINT width, UINT height, D3DFORMAT format, D3DMULTISAMPLE_TYPE ms,
+    DWORD quality, BOOL lockable, IDirect3DSurface9** surface, HANDLE* shared) {
+    using Fn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, UINT, UINT,
+        D3DFORMAT, D3DMULTISAMPLE_TYPE, DWORD, BOOL, IDirect3DSurface9**, HANDLE*);
+    const auto result = OriginalDeviceMethod<Fn>(device, 28)(device, width,
+        height, format, ms, quality, lockable, surface, shared);
+    if (IsDebugModeEnabled()) {
+        static unsigned count = 0;
+        if (++count <= 512) Log("Resource origin: RT %ux%u fmt=%u surface=%p caller=%p result=%08lX",
+            width, height, format, SUCCEEDED(result) && surface ? *surface : nullptr,
+            _ReturnAddress(), result);
+    }
+    return result;
+}
+
+HRESULT STDMETHODCALLTYPE TraceCreateTexture(IDirect3DDevice9* device,
+    UINT width, UINT height, UINT levels, DWORD usage, D3DFORMAT format,
+    D3DPOOL pool, IDirect3DTexture9** texture, HANDLE* shared) {
+    using Fn = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, UINT, UINT,
+        UINT, DWORD, D3DFORMAT, D3DPOOL, IDirect3DTexture9**, HANDLE*);
+    const auto result = OriginalDeviceMethod<Fn>(device, 23)(device, width,
+        height, levels, usage, format, pool, texture, shared);
+    if (IsDebugModeEnabled() && pool == D3DPOOL_DEFAULT) {
+        static unsigned count = 0;
+        if (++count <= 512) Log("Resource origin: texture %ux%u levels=%u usage=%08lX fmt=%u texture=%p caller=%p result=%08lX",
+            width, height, levels, usage, format,
+            SUCCEEDED(result) && texture ? *texture : nullptr, _ReturnAddress(), result);
+    }
+    return result;
+}
+
 bool BindLifecycleTable(IDirect3DDevice9* device, DeviceLifecycle& lifecycle) {
     auto* table = *reinterpret_cast<void***>(device);
     auto inserted = original_device_tables.try_emplace(table);
     if (inserted.second) std::copy_n(table, inserted.first->second.size(), inserted.first->second.begin());
     lifecycle.original = inserted.first->second.data();
     void* ignored = nullptr;
+    if (IsDebugModeEnabled()) {
+        PatchVtableSlot(table, 28, reinterpret_cast<void*>(&TraceCreateRenderTarget), &ignored);
+        PatchVtableSlot(table, 23, reinterpret_cast<void*>(&TraceCreateTexture), &ignored);
+    }
     return PatchVtableSlot(table, 2, reinterpret_cast<void*>(&HookDeviceRelease), &ignored) &&
         PatchVtableSlot(table, 16, reinterpret_cast<void*>(&HookReset), &ignored);
 }
