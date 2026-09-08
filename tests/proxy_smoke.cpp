@@ -3,12 +3,39 @@
 
 #include <cstdio>
 #include <cwchar>
+#include <cstring>
 
 using Direct3DCreate9Fn = IDirect3D9* (WINAPI*)(UINT);
 
 int g_key_menu_messages = 0;
+int g_window_position_messages = 0;
+IDirect3DDevice9* g_nested_reset_device = nullptr;
+D3DPRESENT_PARAMETERS g_nested_reset_parameters{};
+HRESULT g_nested_reset_result = S_OK;
+int g_nested_reset_calls = 0;
+
+HRESULT STDMETHODCALLTYPE SimulateDeviceLost(IDirect3DDevice9*) {
+    return D3DERR_DEVICELOST;
+}
+
+bool ReplaceDeviceSlot(void** table, size_t index, void* replacement) {
+    DWORD protection = 0;
+    if (!VirtualProtect(table + index, sizeof(void*), PAGE_READWRITE, &protection)) return false;
+    table[index] = replacement;
+    DWORD ignored = 0;
+    return VirtualProtect(table + index, sizeof(void*), protection, &ignored) != FALSE;
+}
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_WINDOWPOSCHANGING) {
+        ++g_window_position_messages;
+        if (g_nested_reset_device) {
+            auto* device = g_nested_reset_device;
+            g_nested_reset_device = nullptr;
+            ++g_nested_reset_calls;
+            g_nested_reset_result = device->Reset(&g_nested_reset_parameters);
+        }
+    }
     if (message == WM_SYSCOMMAND &&
         (wparam & 0xFFF0u) == SC_KEYMENU) {
         ++g_key_menu_messages;
@@ -18,7 +45,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2 && argc != 4 && argc != 6 && argc != 7) {
+    if (argc != 2 && argc != 4 && argc != 6 && argc != 7 && argc != 8) {
         std::fwprintf(stderr,
             L"usage: proxy_smoke <d3d9.dll> [expected-client-width expected-client-height]\n"
             L"       proxy_smoke <d3d9.dll> <config-width> <config-height> <expected-client-width> <expected-client-height> [borderless]\n"
@@ -32,7 +59,9 @@ int wmain(int argc, wchar_t** argv) {
         std::wcstol(argv[expected_index], nullptr, 10) : 1920;
     const long expected_height = argc >= 4 ?
         std::wcstol(argv[expected_index + 1], nullptr, 10) : 1080;
-    const bool borderless = argc == 7 && std::wcstol(argv[6], nullptr, 10) != 0;
+    const bool borderless = argc >= 7 && std::wcstol(argv[6], nullptr, 10) != 0;
+    const bool lifecycle_test = argc == 8;
+    const bool native_render = lifecycle_test && std::wcstol(argv[7], nullptr, 10) != 0;
 
     wchar_t staged_directory[MAX_PATH]{};
     wchar_t staged_dll[MAX_PATH]{};
@@ -74,6 +103,13 @@ int wmain(int argc, wchar_t** argv) {
         }
         WritePrivateProfileStringW(L"Widescreen", L"Borderless",
                                    borderless ? L"1" : L"0", staged_ini);
+        WritePrivateProfileStringW(L"Widescreen", L"NativeRender",
+                                   native_render ? L"1" : L"0", staged_ini);
+        if (lifecycle_test) {
+            WritePrivateProfileStringW(L"Widescreen", L"UIScaleMode", L"2", staged_ini);
+            // This executable exercises the device hooks, not game EXE patches.
+            WritePrivateProfileStringW(L"Widescreen", L"UnifiedUILayout", L"0", staged_ini);
+        }
         dll_path = staged_dll;
     }
 
@@ -106,6 +142,9 @@ int wmain(int argc, wchar_t** argv) {
     }
     RECT initial_client{};
     GetClientRect(window, &initial_client);
+    DEVMODEW desktop_before{};
+    desktop_before.dmSize = sizeof(desktop_before);
+    EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &desktop_before);
 
     IDirect3D9* d3d = create9(D3D_SDK_VERSION);
     if (!d3d) {
@@ -124,7 +163,8 @@ int wmain(int argc, wchar_t** argv) {
     parameters.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
 
     IDirect3DDevice9* device = nullptr;
-    const HRESULT result = d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, window,
+    const D3DDEVTYPE device_type = lifecycle_test ? D3DDEVTYPE_HAL : D3DDEVTYPE_NULLREF;
+    const HRESULT result = d3d->CreateDevice(D3DADAPTER_DEFAULT, device_type, window,
                                              D3DCREATE_SOFTWARE_VERTEXPROCESSING,
                                              &parameters, &device);
     RECT client{};
@@ -135,9 +175,125 @@ int wmain(int argc, wchar_t** argv) {
                 static_cast<unsigned long>(result), parameters.BackBufferWidth,
                 parameters.BackBufferHeight, client.right, client.bottom);
 
+    bool lifecycle_ok = true;
+    if (lifecycle_test && device) {
+        const UINT render_width = native_render ? expected_width : 800;
+        const UINT render_height = native_render ? expected_height : 600;
+        bool expect_fullscreen = false;
+        auto verify = [&]() {
+            IDirect3DSwapChain9* chain = nullptr;
+            D3DPRESENT_PARAMETERS presentation{};
+            if (FAILED(device->GetSwapChain(0, &chain))) return false;
+            const HRESULT queried = chain->GetPresentParameters(&presentation);
+            chain->Release();
+            if (FAILED(queried) || !!presentation.Windowed == expect_fullscreen) return false;
+            DEVMODEW desktop{};
+            desktop.dmSize = sizeof(desktop);
+            if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &desktop)) return false;
+            RECT current_client{};
+            GetClientRect(window, &current_client);
+            if (expect_fullscreen) {
+                std::printf("exclusive display=%lux%lu client=%ldx%ld\n",
+                    desktop.dmPelsWidth, desktop.dmPelsHeight, current_client.right, current_client.bottom);
+                if (desktop.dmPelsWidth != render_width || desktop.dmPelsHeight != render_height ||
+                    current_client.right != render_width || current_client.bottom != render_height) return false;
+            } else if (desktop.dmPelsWidth != desktop_before.dmPelsWidth ||
+                       desktop.dmPelsHeight != desktop_before.dmPelsHeight ||
+                       (!borderless && (GetWindowLongPtrW(window, GWL_STYLE) & WS_CAPTION) != WS_CAPTION)) {
+                return false;
+            }
+            IDirect3DSurface9* target = nullptr;
+            if (FAILED(device->GetRenderTarget(0, &target))) return false;
+            D3DSURFACE_DESC desc{};
+            const HRESULT described = target->GetDesc(&desc);
+            const HRESULT rebound = device->SetRenderTarget(0, target);
+            target->Release();
+            D3DVIEWPORT9 viewport{0, 0, 800, 600, 0.0f, 1.0f};
+            const HRESULT set = device->SetViewport(&viewport);
+            D3DVIEWPORT9 actual{};
+            const HRESULT get = device->GetViewport(&actual);
+            std::printf("verify: target=%ux%u viewport=%ux%u expected=%ux%u\n",
+                desc.Width, desc.Height, actual.Width, actual.Height, render_width, render_height);
+            return SUCCEEDED(described) && SUCCEEDED(rebound) && SUCCEEDED(set) &&
+                SUCCEEDED(get) && desc.Width == render_width && desc.Height == render_height &&
+                actual.Width == render_width && actual.Height == render_height &&
+                SUCCEEDED(device->BeginScene()) && SUCCEEDED(device->EndScene());
+        };
+        lifecycle_ok = verify();
+        // Model repeated power-off/lost-device responses without actually
+        // turning off the user's monitor. No window changes or parameter
+        // mutation are allowed, and the real device must remain usable.
+        auto* table = *reinterpret_cast<void***>(device);
+        void* original_cooperative = table[3];
+        if (ReplaceDeviceSlot(table, 3, reinterpret_cast<void*>(&SimulateDeviceLost))) {
+            const int positions_before = g_window_position_messages;
+            auto unavailable = parameters;
+            unavailable.Windowed = FALSE;
+            const auto before = unavailable;
+            for (int retry = 0; retry < 100; ++retry) {
+                const HRESULT lost = device->Reset(&unavailable);
+                lifecycle_ok = lifecycle_ok && lost == D3DERR_DEVICELOST &&
+                    std::memcmp(&before, &unavailable, sizeof(before)) == 0;
+            }
+            const bool restored = ReplaceDeviceSlot(table, 3, original_cooperative);
+            lifecycle_ok = restored && lifecycle_ok &&
+                positions_before == g_window_position_messages && verify();
+        } else {
+            lifecycle_ok = false;
+        }
+        std::printf("lost-device retry isolation: %s\n", lifecycle_ok ? "PASS" : "FAIL");
+        for (int cycle = 0; cycle < 3 && lifecycle_ok; ++cycle) {
+            D3DPRESENT_PARAMETERS reset{};
+            reset.BackBufferWidth = 800;
+            reset.BackBufferHeight = 600;
+            reset.BackBufferCount = 1;
+            reset.BackBufferFormat = D3DFMT_R5G6B5;
+            reset.SwapEffect = D3DSWAPEFFECT_FLIP;
+            expect_fullscreen = cycle != 1;
+            reset.Windowed = !expect_fullscreen;
+            reset.FullScreen_RefreshRateInHz = 60;
+            reset.hDeviceWindow = window;
+            if (cycle == 0) {
+                auto invalid = reset;
+                IDirect3DSurface9* held_backbuffer = nullptr;
+                lifecycle_ok = SUCCEEDED(device->GetBackBuffer(
+                    0, 0, D3DBACKBUFFER_TYPE_MONO, &held_backbuffer));
+                const HRESULT failed_reset = device->Reset(&invalid);
+                std::printf("invalid reset=0x%08lX\n", static_cast<unsigned long>(failed_reset));
+                if (held_backbuffer) held_backbuffer->Release();
+                lifecycle_ok = lifecycle_ok && FAILED(failed_reset);
+            }
+            g_nested_reset_parameters = reset;
+            g_nested_reset_device = device;
+            const int nested_before = g_nested_reset_calls;
+            const HRESULT reset_result = device->Reset(&reset);
+            g_nested_reset_device = nullptr;
+            std::printf("reset %d=0x%08lX\n", cycle, static_cast<unsigned long>(reset_result));
+            lifecycle_ok = lifecycle_ok && SUCCEEDED(reset_result) &&
+                g_nested_reset_calls == nested_before + 1 &&
+                g_nested_reset_result == D3DERR_DEVICELOST && verify();
+            if (!lifecycle_ok) break;
+            const ULONG remaining_refs = device->Release();
+            std::printf("release refs=%lu\n", remaining_refs);
+            lifecycle_ok = remaining_refs == 0;
+            device = nullptr;
+            reset.Windowed = !expect_fullscreen;
+            reset.BackBufferFormat = D3DFMT_R5G6B5;
+            reset.FullScreen_RefreshRateInHz = 60;
+            lifecycle_ok = lifecycle_ok && SUCCEEDED(d3d->CreateDevice(
+                D3DADAPTER_DEFAULT, device_type, window,
+                D3DCREATE_SOFTWARE_VERTEXPROCESSING, &reset, &device)) && verify();
+        }
+        std::printf("lifecycle reset/recreate: %s\n", lifecycle_ok ? "PASS" : "FAIL");
+    }
     if (device) {
         device->Release();
     }
+    DEVMODEW desktop_after{};
+    desktop_after.dmSize = sizeof(desktop_after);
+    EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &desktop_after);
+    lifecycle_ok = lifecycle_ok && desktop_after.dmPelsWidth == desktop_before.dmPelsWidth &&
+        desktop_after.dmPelsHeight == desktop_before.dmPelsHeight;
     d3d->Release();
     DestroyWindow(window);
     UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
@@ -159,7 +315,8 @@ int wmain(int argc, wchar_t** argv) {
     // environment, window resizing still verifies that the proxy loaded and
     // intercepted CreateDevice. A real device is checked during game QA.
     const bool device_ok = FAILED(result) || expect_unchanged ||
-        (parameters.BackBufferWidth == 800 && parameters.BackBufferHeight == 600);
+        (parameters.BackBufferWidth == (native_render ? expected_width : 800) &&
+         parameters.BackBufferHeight == (native_render ? expected_height : 600));
     // When the proxy resizes the window it must also drop the sizing frame and
     // maximize box so Aero Snap cannot maximize the fixed-backbuffer window
     // (dragging the title bar to the top edge otherwise crashes the game).
@@ -169,5 +326,6 @@ int wmain(int argc, wchar_t** argv) {
     // Invalid configurations leave the original window procedure untouched.
     const bool key_menu_ok = expect_unchanged ?
         g_key_menu_messages == 1 : g_key_menu_messages == 0;
-    return patched && device_ok && style_ok && key_menu_ok ? 0 : 8;
+    if (lifecycle_test && FAILED(result)) return 77;
+    return patched && device_ok && style_ok && key_menu_ok && lifecycle_ok ? 0 : 8;
 }

@@ -1,9 +1,12 @@
 #include "d3d9_proxy_internal.h"
 #include "gui_object.h"
+#include "gui_move_bounds.h"
 #include "ui_layout_registry.h"
 #include "ui_page_geometry.h"
 #include "ui_dispatch.h"
 #include "font_outline.h"
+#include "font_dialogue.h"
+#include "font_scale_patch.h"
 #include "training_animation.h"
 
 #include <intrin.h>
@@ -17,9 +20,27 @@
 
 namespace stardom {
 
-using GuiMoveFn = void(__thiscall*)(void*, int, int);
+using NativeGuiMoveFn = void(__thiscall*)(void*, int, int);
+using GuiMoveFn = void(*)(void*, int, int);
 using GuiResizeFn = void(__thiscall*)(void*, int, int);
 using MapLocationUpdateFn = bool(__thiscall*)(void*, void*);
+
+void MoveGuiWithOutputBounds(void* self, int x, int y) {
+    const auto native = reinterpret_cast<NativeGuiMoveFn>(g_unified_ui.trampoline);
+    void* parent = CanReadGuiObject(self) ? GuiPointer(self, GuiObjectField::parent) : nullptr;
+    if (parent && parent == g_unified_ui.primary_root && CanReadGuiObject(parent)) {
+        // Fullscreen startup retains an 800x600 logical parent. GuiMove clamps
+        // to that parent, turning a fitted 1440x1080 title at (240,0) into
+        // (-640,-480). Keep logical geometry intact outside the native call.
+        ScopedGuiMoveBounds bounds(
+            GuiField<int>(parent, GuiObjectField::width),
+            GuiField<int>(parent, GuiObjectField::height),
+            static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
+        native(self, x, y);
+        return;
+    }
+    native(self, x, y);
+}
 
 struct MapLocationDiagnosticState {
     void* trampoline = nullptr;
@@ -1261,7 +1282,7 @@ void LayoutAwardsCeremonyCurtainLayer(void* object) {
     if (!CanReadGuiObject(object) || !g_unified_ui.trampoline) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     auto* bytes = static_cast<unsigned char*>(object);
     int cover_width = 0;
     int cover_height = 0;
@@ -1303,7 +1324,7 @@ void LayoutAwardsCeremonyOverlayRoot(void* root) {
     if (!CanReadGuiObject(root) || !g_unified_ui.trampoline) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     original(root,
         (static_cast<int>(g_unified_ui.width) - LegacyCanvas::width) / 2,
         (static_cast<int>(g_unified_ui.height) - LegacyCanvas::height) / 2);
@@ -1701,7 +1722,7 @@ void LayoutInGameCGRoot(void* object) {
     if (!CanReadGuiObject(object) || !g_unified_ui.trampoline) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
         AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                               static_cast<int>(g_unified_ui.height));
@@ -1909,7 +1930,7 @@ void UpdateTitleStripMotion(ULONGLONG now) {
     const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
         AspectFitLegacyCanvas(static_cast<int>(g_unified_ui.width),
                               static_cast<int>(g_unified_ui.height));
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     TitleNativeGeometry* primary =
         FindTitleNativeGeometry(g_title_strip_motion.primary_object);
     TitleNativeGeometry* follower =
@@ -1930,7 +1951,7 @@ void ScaleTitleScreenSubtree(void* object, int depth = 0) {
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         auto* bytes = static_cast<unsigned char*>(object);
         int& width = GuiField<int>(bytes, GuiObjectField::width);
         int& height = GuiField<int>(bytes, GuiObjectField::height);
@@ -2082,7 +2103,7 @@ void ScaleAspectFitSubtree(
             return false;
         }
 
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         int& width = GuiField<int>(object, GuiObjectField::width);
         int& height = GuiField<int>(object, GuiObjectField::height);
         const RectI viewport = AspectFitLegacyCanvas(
@@ -2172,7 +2193,7 @@ void RefreshEndGameCreditsBeforeDraw() {
     const RectI viewport = AspectFitLegacyCanvas(
         static_cast<int>(g_unified_ui.width),
         static_cast<int>(g_unified_ui.height));
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     for (const auto& motion : g_end_game_credit_motion) {
         if (!CanReadGuiObject(motion.object) ||
             !IsDescendantOf(motion.object, g_end_game_summary_root)) {
@@ -2193,7 +2214,7 @@ void ScaleEndGameSummarySubtree(void* object, int depth = 0) {
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         int& width = GuiField<int>(object, GuiObjectField::width);
         int& height = GuiField<int>(object, GuiObjectField::height);
         const RectI viewport = AspectFitLegacyCanvas(
@@ -2390,7 +2411,7 @@ void ScaleBigActivityOption(void* object) {
     }
     const RectI viewport = AspectFitLegacyCanvas(
         static_cast<int>(g_unified_ui.width), static_cast<int>(g_unified_ui.height));
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     GuiField<int>(object, GuiObjectField::width) = MulDiv(360, viewport.width, 800);
     GuiField<int>(object, GuiObjectField::height) = MulDiv(370, viewport.height, 600);
     original(object, viewport.x + (viewport.width - GuiField<int>(object, GuiObjectField::width)) / 2,
@@ -2545,7 +2566,7 @@ void RestoreCompanyRevenueChartToNative() {
     if (!g_unified_ui.trampoline) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     for (size_t i = 0; i < g_company_revenue_geometry_count; ++i) {
         TitleNativeGeometry& native = g_company_revenue_geometry[i];
         if (!CanReadGuiObject(native.object)) {
@@ -2612,7 +2633,7 @@ void RefreshCompanyRevenueBars() {
     const RectI viewport = AspectFitLegacyCanvas(
         static_cast<int>(g_unified_ui.width),
         static_cast<int>(g_unified_ui.height));
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     for (size_t i = 0; i < g_company_revenue_geometry_count; ++i) {
         TitleNativeGeometry& native = g_company_revenue_geometry[i];
         if (!CanReadGuiObject(native.object) ||
@@ -2919,6 +2940,7 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
         GuiField<unsigned char>(self, 0x14C) = 0;
     }
     const auto fitted = FitPageTextMetrics(font, saved[1], viewport.height);
+    FittedLabelFontScope label_font(fitted.font_size);
     GuiField<int>(self, 0x130) = fitted.font_size;
     GuiField<int>(self, 0x140) = fitted.line_gap;
     // Use the game's own measurement with the fitted bounds/font so centred,
@@ -2963,6 +2985,7 @@ void __fastcall HookFittedTextDraw(void* self, void*, void* renderer,
 void __fastcall HookCompanyListDraw(void* self, void*, void* renderer,
                                     uint32_t time, uint32_t flags) {
     GuiObjectReadBatch read_batch;
+    InventoryTextContrast dialogue(IsDialogueMemo(self), true, true);
     if (!IsAspectFittedTextObject(self) ||
         !CanReadGuiObject(static_cast<unsigned char*>(self) + 0x50)) {
         g_company_list_draw(self, renderer, time, flags);
@@ -3023,7 +3046,7 @@ void ScaleAirportSelectionSubtree(void* object, int depth = 0) {
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         int& width = GuiField<int>(object, GuiObjectField::width);
         int& height = GuiField<int>(object, GuiObjectField::height);
         const auto [viewport_x, viewport_y, viewport_width, viewport_height] =
@@ -3151,7 +3174,7 @@ void RestoreTitleTutorialDropdown(
     if (!CanReadGuiObject(layout.root) || !g_unified_ui.trampoline) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     for (size_t i = 0; i < layout.geometry_count; ++i) {
         TitleNativeGeometry& native = layout.geometry[i];
         if (!CanReadGuiObject(native.object)) {
@@ -3183,7 +3206,7 @@ void ScaleStudioEventDropdownSubtree(void* object,
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         auto* bytes = static_cast<unsigned char*>(object);
         int& width = GuiField<int>(bytes, GuiObjectField::width);
         int& height = GuiField<int>(bytes, GuiObjectField::height);
@@ -3321,7 +3344,7 @@ void ScaleTrainingMinigameSubtree(void* object, int depth = 0) {
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         auto* bytes = static_cast<unsigned char*>(object);
         int& width = GuiField<int>(bytes, GuiObjectField::width);
         int& height = GuiField<int>(bytes, GuiObjectField::height);
@@ -3481,7 +3504,7 @@ void ScaleTitleTutorialBubbleSubtree(void* object, int depth = 0) {
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         auto* bytes = static_cast<unsigned char*>(object);
         int& width = GuiField<int>(bytes, GuiObjectField::width);
         int& height = GuiField<int>(bytes, GuiObjectField::height);
@@ -3597,7 +3620,7 @@ void ScaleAnnouncementSubtree(void* object, int depth = 0) {
         if (owns_scaling_guard) {
             g_scaling_announcement_subtree = true;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         auto* bytes = static_cast<unsigned char*>(object);
         int& width = GuiField<int>(bytes, GuiObjectField::width);
         int& height = GuiField<int>(bytes, GuiObjectField::height);
@@ -3784,7 +3807,7 @@ void ScalePhotoAlbumSubtree(void* object, int depth = 0) {
         if (!g_unified_ui.trampoline) {
             return false;
         }
-        auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+        auto original = &MoveGuiWithOutputBounds;
         auto* bytes = static_cast<unsigned char*>(object);
         int& x = GuiField<int>(bytes, GuiObjectField::x);
         int& y = GuiField<int>(bytes, GuiObjectField::y);
@@ -4484,7 +4507,7 @@ void RefreshPhoneOverlayDialoguePanels(const char* phase) {
         return;
     }
 
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
     while (CanReadGuiObject(child) && visited++ < 6) {
@@ -4554,7 +4577,7 @@ void RefreshPhoneOverlayButton(const char* phase) {
     if (x == target_x && y == target_y) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     original(g_phone_overlay_button, target_x, target_y);
     int after_x = GuiField<int>(button_bytes, GuiObjectField::x);
     int after_y = GuiField<int>(button_bytes, GuiObjectField::y);
@@ -4666,7 +4689,7 @@ void NormalizeVisibleToolbarSlots(void* object, int expected_slots) {
                 reinterpret_cast<uintptr_t>(right.object);
         });
     constexpr int kToolbarSlotX[7] = {5, 51, 96, 141, 186, 231, 276};
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     for (size_t i = 0; i < slot_count; ++i) {
         if (slots[i].x != kToolbarSlotX[i]) {
             original(slots[i].object, kToolbarSlotX[i], slots[i].y);
@@ -5235,7 +5258,7 @@ void ReflowExistingRootChildren(void* root, int depth = 0) {
     if (root == g_unified_ui.primary_root) {
         DiscoverInGameCGSurfaces(root);
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     auto* root_bytes = static_cast<unsigned char*>(root);
     void* child = GuiField<void*>(root_bytes, GuiObjectField::first_child);
     size_t visited = 0;
@@ -5667,7 +5690,7 @@ void RefreshInGameCGOverlays(bool discover_surfaces) {
         !g_unified_ui.trampoline) {
         return;
     }
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     const auto refresh_caption = [&]() {
         if (!CanReadGuiObject(g_unified_ui.in_game_cg_caption)) {
             return;
@@ -6480,7 +6503,7 @@ bool DispatchAspectFitPageMove(PageMoveContext& context) {
 }
 
 void __fastcall HookGuiMove(void* self, void*, int x, int y) {
-    auto original = reinterpret_cast<GuiMoveFn>(g_unified_ui.trampoline);
+    auto original = &MoveGuiWithOutputBounds;
     if (!original || !self) {
         return;
     }
@@ -7020,6 +7043,10 @@ bool InstallCompanyListDrawHook(HMODULE executable) {
 bool InstallFittedTextDrawHook(HMODULE executable) {
     if (g_fitted_text_draw) {
         return true;
+    }
+    if (!InstallFractionalFontScalePatch(executable)) {
+        Log("Aspect-fit text scaling unavailable");
+        return false;
     }
     auto* target = reinterpret_cast<unsigned char*>(executable) + 0x130310;
     auto* measure = reinterpret_cast<unsigned char*>(executable) + 0x130710;

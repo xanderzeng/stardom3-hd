@@ -19,6 +19,12 @@ std::wstring IniPath();
 void Log(const char* format, ...);
 void LogProbeBytes(const unsigned char* address, size_t count);
 bool IsDebugModeEnabled();
+void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless,
+                      bool fullscreen = false);
+void NormalizePresentation(D3DPRESENT_PARAMETERS& parameters, const Config& config);
+bool SyncEngineDisplayMode(const Config& config);
+bool InstallDeviceLifecycleHooks(IDirect3DDevice9* device, const Config& config,
+                                 HWND window);
 
 bool CanReadGuiObject(const void* object);
 void RefreshUnifiedUILayout();

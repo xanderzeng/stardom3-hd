@@ -2,6 +2,33 @@ cmake_minimum_required(VERSION 3.20)
 project(Stardom3Widescreen LANGUAGES CXX)
 
 enable_testing()
+add_executable(native_resource_recovery_tests tests/native_resource_recovery_tests.cpp)
+target_compile_features(native_resource_recovery_tests PRIVATE cxx_std_17)
+target_compile_definitions(native_resource_recovery_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(native_resource_recovery_tests PRIVATE user32)
+set_property(TARGET native_resource_recovery_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME native_resource_recovery COMMAND native_resource_recovery_tests)
+add_executable(crash_diagnostics_tests tests/crash_diagnostics_tests.cpp)
+target_compile_features(crash_diagnostics_tests PRIVATE cxx_std_17)
+target_compile_definitions(crash_diagnostics_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET crash_diagnostics_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME crash_diagnostics COMMAND crash_diagnostics_tests)
+add_executable(font_scale_patch_tests tests/font_scale_patch_tests.cpp)
+target_compile_features(font_scale_patch_tests PRIVATE cxx_std_17)
+target_compile_definitions(font_scale_patch_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET font_scale_patch_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME font_scale_patch COMMAND font_scale_patch_tests)
+add_executable(engine_display_mode_tests tests/engine_display_mode_tests.cpp)
+target_compile_features(engine_display_mode_tests PRIVATE cxx_std_17)
+target_include_directories(engine_display_mode_tests PRIVATE src)
+set_property(TARGET engine_display_mode_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME engine_display_mode COMMAND engine_display_mode_tests)
+
+add_executable(gui_move_bounds_tests tests/gui_move_bounds_tests.cpp)
+target_compile_features(gui_move_bounds_tests PRIVATE cxx_std_17)
+target_include_directories(gui_move_bounds_tests PRIVATE src)
+set_property(TARGET gui_move_bounds_tests PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME gui_move_bounds COMMAND gui_move_bounds_tests)
 
 add_executable(training_animation_tests tests/training_animation_tests.cpp)
 target_compile_features(training_animation_tests PRIVATE cxx_std_17)
@@ -12,6 +39,8 @@ add_test(NAME training_animation COMMAND training_animation_tests)
 
 add_library(d3d9 SHARED
     src/d3d9_proxy.cpp
+    src/crash_diagnostics.cpp
+    src/native_resource_recovery.cpp
     src/display_config.cpp
     src/proxy_config.cpp
     src/proxy_config.h
@@ -30,6 +59,7 @@ add_library(d3d9 SHARED
     src/render_diagnostics.h
     src/d3d9_video.cpp
     src/d3d9_font.cpp
+    src/font_scale_patch.cpp
     src/font_outline.cpp
     src/d3d9_proxy_internal.h
     src/ui_layout_state.h
@@ -141,3 +171,9 @@ add_test(NAME proxy_partial_resolution
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 - -1 -1)
 add_test(NAME proxy_malformed_resolution
     COMMAND proxy_smoke $<TARGET_FILE:d3d9> invalid 1080 -1 -1)
+add_test(NAME proxy_lifecycle_native
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1920 1080 1920 1080 0 1)
+add_test(NAME proxy_lifecycle_compatibility
+    COMMAND proxy_smoke $<TARGET_FILE:d3d9> 1280 720 1280 720 1 0)
+set_tests_properties(proxy_lifecycle_native proxy_lifecycle_compatibility
+    PROPERTIES SKIP_RETURN_CODE 77)

@@ -14,6 +14,9 @@
 
 #include "d3d9_proxy_internal.h"
 #include "font_outline.h"
+#include "engine_display_mode.h"
+#include "crash_diagnostics.h"
+#include "native_resource_recovery.h"
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
@@ -131,13 +134,34 @@ bool InstallWindowCompatibilityHook(HWND window) {
 }
 
 
-void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
+void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless,
+                      bool fullscreen) {
     if (!window || !IsWindow(window)) {
         return;
     }
 
     DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
     DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+    // Retain frame bits across fullscreen -> windowed resets. Other dynamic
+    // bits (visibility, minimization, clipping) remain owned by Windows/game.
+    constexpr wchar_t saved_style[] = L"Stardom3.Widescreen.FrameStyle";
+    constexpr wchar_t saved_ex_style[] = L"Stardom3.Widescreen.FrameExStyle";
+    constexpr DWORD frame_mask = WS_CAPTION | WS_BORDER | WS_DLGFRAME |
+        WS_MINIMIZEBOX | WS_SYSMENU;
+    constexpr DWORD ex_frame_mask = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+        WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
+    if (!GetPropW(window, saved_style)) {
+        SetPropW(window, saved_style,
+            reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>((style & frame_mask) + 1)));
+        SetPropW(window, saved_ex_style,
+            reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>((ex_style & ex_frame_mask) + 1)));
+    }
+    if (!borderless && !fullscreen) {
+        const auto saved = reinterpret_cast<ULONG_PTR>(GetPropW(window, saved_style));
+        const auto saved_ex = reinterpret_cast<ULONG_PTR>(GetPropW(window, saved_ex_style));
+        if (saved) style = (style & ~frame_mask) | static_cast<DWORD>(saved - 1);
+        if (saved_ex) ex_style = (ex_style & ~ex_frame_mask) | static_cast<DWORD>(saved_ex - 1);
+    }
 
     // The proxy always presents a fixed-size backbuffer, so the OS window has to
     // stay a fixed size. Windows Aero Snap otherwise maximizes a
@@ -148,7 +172,7 @@ void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
     // which also disables the snap-to-top gesture and border-drag resizing.
     style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
 
-    if (borderless) {
+    if (borderless || fullscreen) {
         // Additionally strip the caption/border decorations while keeping every
         // other style bit the game and D3D9 already rely on (WS_VISIBLE,
         // WS_CLIPSIBLINGS, WS_CLIPCHILDREN, the game's own flags, ...).
@@ -180,11 +204,11 @@ void ResizeClientArea(HWND window, UINT width, UINT height, bool borderless) {
     MONITORINFO monitor_info{};
     monitor_info.cbSize = sizeof(monitor_info);
     if (monitor && GetMonitorInfoW(monitor, &monitor_info)) {
-        const RECT& work = monitor_info.rcWork;
+        const RECT& work = fullscreen ? monitor_info.rcMonitor : monitor_info.rcWork;
         const int work_width = work.right - work.left;
         const int work_height = work.bottom - work.top;
-        x = work.left + (work_width - window_width) / 2;
-        y = work.top + (work_height - window_height) / 2;
+        x = work.left + (fullscreen ? 0 : (work_width - window_width) / 2);
+        y = work.top + (fullscreen ? 0 : (work_height - window_height) / 2);
         if (x < work.left) {
             x = work.left;
         }
@@ -214,6 +238,48 @@ bool LoadSystemD3D9() {
     g_create9 = reinterpret_cast<Direct3DCreate9Fn>(GetProcAddress(g_system_d3d9, "Direct3DCreate9"));
     g_create9_ex = reinterpret_cast<Direct3DCreate9ExFn>(GetProcAddress(g_system_d3d9, "Direct3DCreate9Ex"));
     return g_create9 != nullptr;
+}
+
+void NormalizePresentation(D3DPRESENT_PARAMETERS& parameters, const Config& config) {
+    parameters.FullScreen_RefreshRateInHz = 0;
+    // Preserve the game's mode choice. Exclusive fullscreen changes the display
+    // mode to the backbuffer size; UNKNOWN is only legal for windowed output.
+    parameters.BackBufferFormat = parameters.Windowed ? D3DFMT_UNKNOWN : D3DFMT_X8R8G8B8;
+    parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    parameters.BackBufferWidth = config.native_render ? config.resolution.width : LegacyCanvas::width;
+    parameters.BackBufferHeight = config.native_render ? config.resolution.height : LegacyCanvas::height;
+}
+
+bool SyncEngineDisplayMode(const Config& config) {
+    if (!config.native_render) return false;
+    auto* base = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    // These addresses belong to the supported Stardom3 executable, not D3D9.
+    // The fullscreen camera obtains raster/picking dimensions from this mode
+    // table, so it must agree with the configured render dimensions.
+    if (reinterpret_cast<uintptr_t>(base) != 0x400000) return false;
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    if (nt->OptionalHeader.SizeOfImage <= 0x6194FC) return false;
+    const unsigned char mode_query[] = {0x8B, 0x0D, 0xF8, 0x94, 0xA1, 0x00};
+    const unsigned char width_query[] = {0xA1, 0xA4, 0x08, 0xA2, 0x00, 0xC3};
+    if (std::memcmp(base + 0x28F3E0, mode_query, sizeof(mode_query)) != 0 ||
+        std::memcmp(base + 0x10E120, width_query, sizeof(width_query)) != 0) return false;
+    const unsigned selected = *reinterpret_cast<unsigned*>(base + 0x6194C8);
+    const unsigned count = *reinterpret_cast<unsigned*>(base + 0x6194F0);
+    auto* modes = *reinterpret_cast<EngineDisplayMode**>(base + 0x6194F8);
+    if (!modes || count == 0 || count > 4096 || selected >= count) return false;
+    MEMORY_BASIC_INFORMATION region{};
+    auto* entry = modes + selected;
+    if (!VirtualQuery(entry, &region, sizeof(region)) || region.State != MEM_COMMIT ||
+        (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
+        !(region.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) ||
+        reinterpret_cast<uintptr_t>(entry) + sizeof(*entry) >
+            reinterpret_cast<uintptr_t>(region.BaseAddress) + region.RegionSize) return false;
+    const bool result = UpdateSelectedEngineDisplayMode(modes, count, selected,
+        config.resolution.width, config.resolution.height);
+    if (result) Log("Engine display mode synchronized: index=%u output=%dx%d",
+        selected, config.resolution.width, config.resolution.height);
+    return result;
 }
 
 class Direct3D9Proxy final : public IDirect3D9 {
@@ -265,6 +331,8 @@ public:
 
         const Config config = LoadConfig(IniPath());
         g_debug_mode = config.debug_mode;
+        ConfigureCrashDiagnostics(config.debug_mode, g_module_dir.c_str());
+        ConfigureRuntimeErrorDiagnostics(config.debug_mode, g_system_d3d9);
         if (!config.enabled) {
             Log("Patch disabled; forwarding CreateDevice unchanged");
             return real_->CreateDevice(adapter, type, focus_window, flags, parameters, device);
@@ -284,22 +352,13 @@ public:
         D3DPRESENT_PARAMETERS patched = *parameters;
         const UINT original_width = patched.BackBufferWidth;
         const UINT original_height = patched.BackBufferHeight;
-        patched.Windowed = TRUE;
-        patched.FullScreen_RefreshRateInHz = 0;
-        if (config.native_render) {
-            patched.BackBufferWidth = output_width;
-            patched.BackBufferHeight = output_height;
-        } else {
-            // Stardom3 passes 0x0 and lets D3D9 infer 800x600 from the original
-            // client area. Once the client is enlarged that would accidentally
-            // create a native-size backbuffer, so compatibility mode must pin
-            // the game's logical render surface explicitly.
-            patched.BackBufferWidth = LegacyCanvas::width;
-            patched.BackBufferHeight = LegacyCanvas::height;
-        }
+        NormalizePresentation(patched, config);
 
         HWND target_window = patched.hDeviceWindow ? patched.hDeviceWindow : focus_window;
-        ResizeClientArea(target_window, output_width, output_height, config.borderless);
+        ResizeClientArea(target_window,
+            patched.Windowed ? output_width : patched.BackBufferWidth,
+            patched.Windowed ? output_height : patched.BackBufferHeight,
+            config.borderless, !patched.Windowed);
         if (!InstallWindowCompatibilityHook(target_window)) {
             Log("Failed to install window compatibility hook (error=%lu)",
                 GetLastError());
@@ -313,11 +372,20 @@ public:
 
         const HRESULT result = real_->CreateDevice(adapter, type, focus_window, flags, &patched, device);
         if (SUCCEEDED(result)) {
+            InstallNativeResourceRecovery(GetModuleHandleW(nullptr));
+            SyncEngineDisplayMode(config);
+            if (device && *device &&
+                !InstallDeviceLifecycleHooks(*device, config, target_window)) {
+                Log("Failed to install device lifecycle hooks");
+            }
             if (config.font_outline_union) {
                 InstallFontOutlineHook(GetModuleHandleW(nullptr));
             }
             *parameters = patched;
-            ResizeClientArea(target_window, output_width, output_height, config.borderless);
+            ResizeClientArea(target_window,
+                patched.Windowed ? output_width : patched.BackBufferWidth,
+                patched.Windowed ? output_height : patched.BackBufferHeight,
+                config.borderless, !patched.Windowed);
             if (config.native_render && config.unified_ui_layout) {
                 InstallUnifiedUILayoutHook(output_width, output_height,
                                            config.title_screen_mode);
@@ -373,6 +441,7 @@ extern "C" HRESULT WINAPI Direct3DCreate9Ex(UINT sdk_version, IDirect3D9Ex** d3d
 }
 
 extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_DETACH) stardom::RemoveCrashDiagnostics();
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
         stardom::g_module_dir = stardom::ModuleDirectory();

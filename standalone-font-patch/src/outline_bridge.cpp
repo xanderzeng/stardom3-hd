@@ -2,6 +2,7 @@
 #include "font_hook.h"
 #include "font_outline.h"
 #include "gui_object.h"
+#include "font_dialogue.h"
 #include <map>
 #include <vector>
 #include <cstring>
@@ -97,9 +98,10 @@ void __fastcall Label(void* self,void*,void* renderer,DWORD time,DWORD flags) {
 void __fastcall Memo(void* self,void*,void* renderer,DWORD time,DWORD flags) {
     using namespace stardom;
     GuiObjectReadBatch batch;
-    InventoryTextContrast scope(CanReadGuiObject(self) &&
+    const bool dialogue = IsDialogueMemo(self);
+    InventoryTextContrast scope(dialogue || (CanReadGuiObject(self) &&
         GuiField<int>(self,GuiObjectField::width)==200 &&
-        GuiField<int>(self,GuiObjectField::height)==60 && NativeCard(self,420,542));
+        GuiField<int>(self,GuiObjectField::height)==60 && NativeCard(self,420,542)), dialogue, dialogue);
     memo_draw(self,renderer,time,flags);
 }
 bool HookText(unsigned char* target,const unsigned char* expected,size_t count,void* hook,TextDraw& original) {
