@@ -40,10 +40,14 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
     DWORD cell = 0;
     std::memcpy(&cell, colors + 8, sizeof(cell));
     const bool small_outline = cell >= 8 && cell <= 16 && (flags & 0x200);
-    bool contrast = (g_inventory_contrast || small_outline) && colors[0x51] == 0;
+    const bool plain_text = (flags & 0x200) == 0;
+    bool neutral_text = true;
+    bool targeted_contrast = (g_inventory_contrast || small_outline) && colors[0x51] == 0;
     for (unsigned i = 0; i < 4; ++i) {
+        neutral_text &= colors[0x58 + i * 4] == colors[0x59 + i * 4] &&
+                        colors[0x59 + i * 4] == colors[0x5A + i * 4];
         // Native inventory description #DADAD8, stored as RGBA bytes.
-        contrast &= (g_light_text_contrast || small_outline) ?
+        targeted_contrast &= (g_light_text_contrast || small_outline) ?
                     (colors[0x58 + i * 4] >= 192 &&
                      colors[0x59 + i * 4] >= 192 &&
                      colors[0x5A + i * 4] >= 192) :
@@ -51,15 +55,23 @@ DWORD __fastcall HookGlyphDraw(void* self, void*, DWORD glyph, DWORD a2,
                     colors[0x59 + i * 4] == 0xDA &&
                     colors[0x5A + i * 4] == 0xD8);
     }
+    // Generic outline applies only to black/white/gray. Keep the pre-existing
+    // page-specific exceptions and authored colored outlines unchanged.
+    const bool contrast = (plain_text && neutral_text) || targeted_contrast;
     unsigned char saved_outline[16];
     unsigned char saved_body[16];
     if (contrast) {
         std::memcpy(saved_outline, colors + 0x78, 16);
         std::memcpy(saved_body, colors + 0x58, 16);
         for (unsigned i = 0; i < 4; ++i) {
-            colors[0x78 + i * 4] = 0x30;
-            colors[0x79 + i * 4] = 0x34;
-            colors[0x7A + i * 4] = 0x28;
+            // Plain text has no authored border. Pick a contrasting neutral
+            // border from its foreground, retaining source color and opacity.
+            const unsigned luminance = 77u * colors[0x58 + i * 4] +
+                150u * colors[0x59 + i * 4] + 29u * colors[0x5A + i * 4];
+            const bool light_border = plain_text && !g_brighten_text && luminance < 128u * 256u;
+            colors[0x78 + i * 4] = light_border ? 0xF0 : 0x30;
+            colors[0x79 + i * 4] = light_border ? 0xF0 : 0x34;
+            colors[0x7A + i * 4] = light_border ? 0xF0 : 0x28;
             colors[0x7B + i * 4] = colors[0x5B + i * 4];
             if (g_brighten_text) {
                 colors[0x58 + i * 4] = 255;

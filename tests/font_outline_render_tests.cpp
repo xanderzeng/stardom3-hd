@@ -94,6 +94,32 @@ DWORD __fastcall ObserveContrast(void* self, void*, DWORD, DWORD, DWORD,
     return 17;
 }
 
+DWORD expected_plain_body = 0;
+bool expected_light_border = false;
+DWORD __fastcall ObservePlain(void* self, void*, DWORD, DWORD, DWORD,
+                             DWORD, DWORD flags, DWORD) {
+    const auto* p = static_cast<unsigned char*>(self);
+    Check((flags & 0x200) != 0, "plain glyph gets border flag");
+    Check((stardom::g_glyph != nullptr) == (p[0x51] == 0),
+          "extra shadow retains native draw sequence");
+    for (unsigned i=0;i<4;++i) {
+        DWORD body;
+        std::memcpy(&body,p+0x58+i*4,4);
+        Check(body==expected_plain_body,"plain glyph preserves foreground");
+        Check(p[0x78+i*4]==(expected_light_border?0xF0:0x30) &&
+              p[0x79+i*4]==(expected_light_border?0xF0:0x34) &&
+              p[0x7A+i*4]==(expected_light_border?0xF0:0x28) &&
+              p[0x7B+i*4]==p[0x5B+i*4],"plain border contrasts and preserves alpha");
+    }
+    return 19;
+}
+
+DWORD __fastcall ObserveUnoutlined(void*, void*, DWORD, DWORD, DWORD,
+                                  DWORD, DWORD flags, DWORD) {
+    Check(flags==0x1800 && !stardom::g_glyph,"colored plain text keeps original draw flags");
+    return 23;
+}
+
 void TestNativeBridge() {
     using namespace stardom;
     constexpr size_t size = 0x16B900;
@@ -126,7 +152,7 @@ void TestNativeBridge() {
     font[0x58] = 0x08; font[0x59] = 0x6D; font[0x5A] = 0xB3;
     Check(native(font, 1, 2, 3, 4, 0x200, 6) == 0x12345678,
         "ranking blue foreground must not exclude light outline");
-    Check(native(font, 1, 2, 3, 4, 0, 6) == 0, "plain glyph excluded");
+    Check(native(font, 1, 2, 3, 4, 0, 6) == 0, "colored plain glyph excluded");
     font[0x51] = 1;
     Check(native(font, 1, 2, 3, 4, 0x200, 6) == 0, "extra shadow excluded");
     font[0x51] = 0; font[0x78] = 0;
@@ -185,6 +211,26 @@ void TestNativeBridge() {
         Check(std::memcmp(before,font,sizeof(font))==0,"dialogue restores body and border palettes");
     }
     Check(!g_brighten_text,"dialogue cannot brighten later glyphs");
+    g_original = reinterpret_cast<NativeGlyphDraw>(&ObservePlain);
+    for (DWORD body : {0x80FFFFFFu,0x80808080u,0x80000000u,0x00101010u})
+        for (unsigned shadow : {0u,1u}) {
+            expected_plain_body=body;
+            expected_light_border=(body==0x80000000u || body==0x00101010u);
+            font[0x51]=static_cast<unsigned char>(shadow);
+            for(unsigned i=0;i<4;++i) std::memcpy(font+0x58+i*4,&body,4);
+            std::memcpy(before,font,sizeof(font));
+            Check(HookGlyphDraw(font,nullptr,1,2,3,4,0x1800,6)==19,
+                  "unscoped plain text receives contrast");
+            Check(std::memcmp(before,font,sizeof(font))==0,"plain glyph restores palettes");
+        }
+    g_original = reinterpret_cast<NativeGlyphDraw>(&ObserveUnoutlined);
+    font[0x51]=0;
+    for (DWORD body : {0x8080C040u,0x80FEFFFFu,0x80D3D1CAu}) {
+        for(unsigned i=0;i<4;++i) std::memcpy(font+0x58+i*4,&body,4);
+        std::memcpy(before,font,sizeof(font));
+        Check(HookGlyphDraw(font,nullptr,1,2,3,4,0x1800,6)==23,"colored text has no generic border");
+        Check(std::memcmp(before,font,sizeof(font))==0,"colored text palette untouched");
+    }
     g_original = nullptr;
 }
 
